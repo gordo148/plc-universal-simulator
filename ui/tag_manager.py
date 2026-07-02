@@ -186,6 +186,10 @@ def set_tag_flag(app, tag, field, value):
         from ui.alarm_tab import update_alarm_sources
 
         update_alarm_sources(app)
+    elif field == "enabled_dashboard" and hasattr(app, "dashboard_tags_frame"):
+        from ui.dashboard_tab import update_dashboard
+
+        update_dashboard(app, "Dashboard atualizado")
 
 
 def delete_tag(app, tag):
@@ -226,6 +230,14 @@ def get_alarm_tags(app):
         tag for tag in app.tags
         if tag.enabled_alarm
     ]
+
+
+def get_dashboard_tags(app):
+    return [
+        tag for tag in getattr(app, "tags", [])
+        if tag.enabled_dashboard
+    ]
+
 
 def get_feedback_tags(app):
     return [
