@@ -2,10 +2,11 @@ import os
 import time
 import customtkinter as ctk
 from tkinter import messagebox
-from snap7.util import get_bool, get_int
 
+from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 from drivers.siemens_s7 import SiemensS7Driver
 from drivers.schneider_modbus import SchneiderModbusDriver
+from services.plc_service import PLCService
 
 from ui.header import create_header, SCHNEIDER_MODELS
 from ui.digital_tab import create_digital_row
@@ -24,7 +25,11 @@ from ui.tag_manager import (
     get_input_analog_tags,
     get_input_bool_tags,
 )
-from ui.feedback_tab import create_feedback_tab, refresh_feedback_table
+from ui.feedback_tab import (
+    create_feedback_tab,
+    refresh_feedback_table,
+    update_feedback_values,
+)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -35,6 +40,8 @@ class PLCSimulator:
         os.makedirs("configs", exist_ok=True)
 
         self.driver = None
+        self.tag_runtime = RuntimeTagCache()
+        self.plc_service = PLCService(runtime_cache=self.tag_runtime)
         self.digital_states = {}
         self.digital_widgets = []
         self.analog_widgets = []
@@ -121,6 +128,8 @@ class PLCSimulator:
                     int(self.slave_entry.get())
                 )
 
+            self.plc_service.set_driver(self.driver)
+
             if result:
                 self.status_label.configure(text="● LIGADO", text_color="lime")
                 self.cyclic_read_enabled = True
@@ -142,10 +151,17 @@ class PLCSimulator:
 
             self.stop_pid()
 
-            if self.driver:
-                self.driver.disconnect()
-
+            driver = self.driver
             self.driver = None
+            self.plc_service.set_driver(None)
+            self.tag_runtime.invalidate_source(RuntimeValueSource.PLC)
+
+            if driver:
+                try:
+                    driver.disconnect()
+                except Exception:
+                    pass
+
             self.status_label.configure(text="● DESLIGADO", text_color="red")
             update_dashboard(self, "PLC desligado")
 
@@ -158,6 +174,9 @@ class PLCSimulator:
             return False
 
         return True
+
+    def is_online(self):
+        return self.plc_service.is_connected()
 
     def update_brand(self, value):
         self.disconnect()
@@ -194,6 +213,7 @@ class PLCSimulator:
         self.analog_profile_running.clear()
 
     def generate_signals(self):
+        self.tag_runtime.sync(getattr(self, "tags", []))
         self.clear_signal_frames()
 
         for i, tag in enumerate(get_input_bool_tags(self)):
@@ -242,9 +262,6 @@ class PLCSimulator:
             self.toggle_digital(index)
 
     def pulse_digital(self, index):
-        if not self.is_connected():
-            return
-
         item = self.digital_widgets[index]
 
         try:
@@ -263,35 +280,53 @@ class PLCSimulator:
         )
 
     def toggle_digital(self, index):
-        if not self.is_connected():
-            return
-
-        new_state = not self.digital_states[index]
+        item = self.digital_widgets[index]
+        current_state = bool(
+            self.tag_runtime.get_value(item["tag"].name, False)
+        )
+        new_state = not current_state
         self.write_digital_state(index, new_state)
 
     def write_digital_state(self, index, state):
-        if not self.is_connected():
-            return None
-
         item = self.digital_widgets[index]
 
-        if self.brand_menu.get() == "Siemens":
-            real_state = self.driver.write_digital(
-                item["address_data"]["byte"],
-                item["address_data"]["bit"],
-                state
+        if not self.is_online():
+            self.update_digital_ui(
+                index,
+                bool(state),
+                source=RuntimeValueSource.SIMULATION,
             )
-        else:
-            real_state = self.driver.write_digital(
-                item["address_data"]["coil"],
-                state
+            self.status_label.configure(
+                text="● SIMULAÇÃO OFFLINE",
+                text_color="cyan",
             )
+            update_dashboard(self, "Digital simulada")
+            return bool(state)
+
+        try:
+            if self.brand_menu.get() == "Siemens":
+                real_state = self.driver.write_digital(
+                    item["address_data"]["byte"],
+                    item["address_data"]["bit"],
+                    state
+                )
+            else:
+                real_state = self.driver.write_digital(
+                    item["address_data"]["coil"],
+                    state
+                )
+        except Exception:
+            real_state = None
 
         if real_state is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
             return None
 
-        self.update_digital_ui(index, real_state)
+        self.update_digital_ui(
+            index,
+            real_state,
+            source=RuntimeValueSource.PLC,
+        )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(self, "Digital alterada")
 
@@ -301,29 +336,46 @@ class PLCSimulator:
         item = self.analog_widgets[index]
 
         if item["profile_mode"].get() != "Manual":
-            item["slider"].set(int(item["live"].cget("text")))
-            return
-
-        if not self.is_connected():
-            old_value = int(item["live"].cget("text"))
-            item["slider"].set(old_value)
+            current_value = self.tag_runtime.get_value(item["tag"].name, 0)
+            item["slider"].set(current_value)
             return
 
         self.write_analog_by_index(index, int(float(value)))
 
     def write_analog_by_index(self, index, value):
         item = self.analog_widgets[index]
+        driver = self.driver
 
-        if self.brand_menu.get() == "Siemens":
-            real_value = self.driver.write_analog(item["address_data"]["byte"], value)
-        else:
-            real_value = self.driver.write_analog(item["address_data"]["register"], value)
+        if driver is None or not self.is_online():
+            self.update_analog_ui(
+                index,
+                value,
+                source=RuntimeValueSource.SIMULATION,
+            )
+            self.status_label.configure(
+                text="● SIMULAÇÃO OFFLINE",
+                text_color="cyan",
+            )
+            update_dashboard(self, "Analógica simulada")
+            return value
+
+        try:
+            if self.brand_menu.get() == "Siemens":
+                real_value = driver.write_analog(item["address_data"]["byte"], value)
+            else:
+                real_value = driver.write_analog(item["address_data"]["register"], value)
+        except Exception:
+            real_value = None
 
         if real_value is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
             return None
 
-        self.update_analog_ui(index, real_value)
+        self.update_analog_ui(
+            index,
+            real_value,
+            source=RuntimeValueSource.PLC,
+        )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(self, "Analógica alterada")
 
@@ -335,13 +387,16 @@ class PLCSimulator:
 
         if not self.is_connected():
             self.cyclic_read_enabled = False
+            self.tag_runtime.invalidate_source(RuntimeValueSource.PLC)
+            update_feedback_values(self)
+            update_dashboard(self, "PLC desligado")
             return
 
         try:
-            if self.brand_menu.get() == "Siemens":
-                self.cyclic_read_siemens()
-            else:
-                self.cyclic_read_schneider()
+            self.plc_service.scan(self.tags, self.brand_menu.get())
+            self.update_runtime_widgets()
+            update_feedback_values(self)
+            update_dashboard(self)
 
         except Exception as e:
             self.status_label.configure(text="● ERRO LEITURA", text_color="orange")
@@ -349,75 +404,34 @@ class PLCSimulator:
 
         self.app.after(500, self.start_cyclic_read)
 
-    def cyclic_read_siemens(self):
-        plc_data = self.driver.read_data(1000)
+    def update_runtime_widgets(self):
+        for index, item in enumerate(self.digital_widgets):
+            value = self.tag_runtime.get_value(item["tag"].name)
+            if value is not None:
+                self.update_digital_ui(index, bool(value))
 
-        if plc_data is None:
-            return
+        for index, item in enumerate(self.analog_widgets):
+            value = self.tag_runtime.get_value(item["tag"].name)
+            if value is not None:
+                self.update_analog_ui(index, value)
 
-        for i, item in enumerate(self.digital_widgets):
-            byte_index = item["address_data"]["byte"]
-            bit_index = item["address_data"]["bit"]
-
-            state = get_bool(plc_data, byte_index, bit_index)
-            self.update_digital_ui(i, state)
-
-        for i, item in enumerate(self.analog_widgets):
-            byte_index = item["address_data"]["byte"]
-
-            value = get_int(plc_data, byte_index)
-            self.update_analog_ui(i, value)
-
-        update_dashboard(self)
-
-    def cyclic_read_schneider(self):
-        if self.digital_widgets:
-            coil_start = min(item["address_data"]["coil"] for item in self.digital_widgets)
-            coil_count = len(self.digital_widgets)
-
-            coils = self.driver.read_coils_block(coil_start, coil_count)
-
-            if coils is not None:
-                for i, item in enumerate(self.digital_widgets):
-                    address = item["address_data"]["coil"]
-                    offset = address - coil_start
-
-                    if offset < len(coils):
-                        state = bool(coils[offset])
-                        self.update_digital_ui(i, state)
-
-        if self.analog_widgets:
-            reg_start = min(item["address_data"]["register"] for item in self.analog_widgets)
-            reg_count = len(self.analog_widgets)
-
-            regs = self.driver.read_registers_block(reg_start, reg_count)
-
-            if regs is not None:
-                for i, item in enumerate(self.analog_widgets):
-                    address = item["address_data"]["register"]
-                    offset = address - reg_start
-
-                    if offset < len(regs):
-                        value = regs[offset]
-                        self.update_analog_ui(i, value)
-
-        update_dashboard(self)
-
-    def update_digital_ui(self, index, state):
+    def update_digital_ui(self, index, state, source=None):
         item = self.digital_widgets[index]
 
         self.digital_states[index] = state
-        item["tag"].value = state
+        if source is not None:
+            self.tag_runtime.update(item["tag"].name, state, source)
         name = item["name_entry"].get()
 
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
         item["led"].configure(text="●", text_color="lime" if state else "gray")
         item["live"].configure(text="1" if state else "0")
 
-    def update_analog_ui(self, index, value):
+    def update_analog_ui(self, index, value, source=None):
         item = self.analog_widgets[index]
 
-        item["tag"].value = value
+        if source is not None:
+            self.tag_runtime.update(item["tag"].name, value, source)
         item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")
         item["live"].configure(text=str(value))

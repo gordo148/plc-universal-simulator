@@ -46,37 +46,49 @@ def run_profile(app, index):
     if step <= 0:
         step = 1
 
-    current_value = int(item["live"].cget("text"))
-
-    if mode == "Ramp":
-        direction = item["direction"]
-        next_value = current_value + step * direction
-
-        if next_value >= max_value:
-            next_value = max_value
-            item["direction"] = -1
-
-        if next_value <= min_value:
-            next_value = min_value
-            item["direction"] = 1
-
-    elif mode == "Random":
-        next_value = random.randint(min_value, max_value)
-
-    elif mode == "Step":
-        if current_value <= min_value:
-            next_value = max_value
-        else:
-            next_value = min_value
-
-    else:
+    if min_value > max_value:
+        stop_profile(app, index)
+        item["profile_status"].configure(text="ERRO", text_color="orange")
         return
 
-    result = app.write_analog_by_index(index, next_value)
+    try:
+        current_value = int(
+            app.tag_runtime.get_value(item["tag"].name, 0)
+        )
+
+        if mode == "Ramp":
+            direction = item["direction"]
+            next_value = current_value + step * direction
+
+            if next_value >= max_value:
+                next_value = max_value
+                item["direction"] = -1
+
+            if next_value <= min_value:
+                next_value = min_value
+                item["direction"] = 1
+
+        elif mode == "Random":
+            next_value = random.randint(min_value, max_value)
+
+        elif mode == "Step":
+            if current_value <= min_value:
+                next_value = max_value
+            else:
+                next_value = min_value
+
+        else:
+            return
+
+        result = app.write_analog_by_index(index, next_value)
+
+    except Exception:
+        result = None
 
     if result is None:
         stop_profile(app, index)
-        item["profile_status"].configure(text="ERRO PLC", text_color="orange")
+        error_text = "ERRO PLC" if app.is_online() else "ERRO"
+        item["profile_status"].configure(text=error_text, text_color="orange")
         return
 
     app.app.after(interval_ms, lambda: run_profile(app, index))

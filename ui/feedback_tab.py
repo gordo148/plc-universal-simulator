@@ -1,6 +1,4 @@
-import struct
 import customtkinter as ctk
-from snap7.util import get_bool, get_int, get_real
 from ui.tag_manager import get_feedback_tags
 
 
@@ -98,12 +96,9 @@ def scan_feedbacks(app):
 
 
 def update_feedback_values(app):
-    if app.driver is None or not app.driver.is_connected():
-        return
-
     for row in app.feedback_rows:
         tag = row["tag"]
-        value = read_feedback_value(app, tag)
+        value = app.tag_runtime.get_value(tag.name)
 
         if value is None:
             row["led"].configure(
@@ -113,81 +108,9 @@ def update_feedback_values(app):
             row["value"].configure(text="---")
             continue
 
-        tag.value = value
-
         if tag.data_type == "BOOL":
             row["led"].configure(text="●", text_color="lime" if value else "gray")
             row["value"].configure(text="1" if value else "0")
         else:
             row["led"].configure(text="")
             row["value"].configure(text=str(value))
-
-
-def read_feedback_value(app, tag):
-    try:
-        if app.brand_menu.get() == "Siemens":
-            return read_siemens_feedback(app, tag)
-
-        return read_schneider_feedback(app, tag)
-
-    except Exception:
-        return None
-
-
-def read_siemens_feedback(app, tag):
-    data = app.driver.read_data(1000)
-
-    if data is None:
-        return None
-
-    address = tag.address.strip().upper()
-
-    if tag.data_type == "BOOL":
-        address = address.replace("DBX", "")
-        byte_text, bit_text = address.split(".")
-        return get_bool(data, int(byte_text), int(bit_text))
-
-    if tag.data_type == "INT":
-        address = address.replace("DBW", "")
-        return get_int(data, int(address))
-
-    if tag.data_type == "REAL":
-        address = address.replace("DBD", "")
-        return round(get_real(data, int(address)), 3)
-
-    return None
-
-
-def read_schneider_feedback(app, tag):
-
-    address = tag.address.strip().upper()
-
-    if tag.data_type == "BOOL":
-        address = address.replace("%M", "").replace("M", "")
-        values = app.driver.read_coils_block(int(address), 1)
-
-        if values is None:
-            return None
-
-        return bool(values[0])
-
-    if tag.data_type == "INT":
-        address = address.replace("%MW", "").replace("MW", "")
-        values = app.driver.read_registers_block(int(address), 1)
-
-        if values is None:
-            return None
-
-        return values[0]
-
-    if tag.data_type == "REAL":
-        address = address.replace("%MW", "").replace("MW", "")
-        values = app.driver.read_registers_block(int(address), 2)
-
-        if values is None or len(values) < 2:
-            return None
-
-        raw = struct.pack(">HH", values[0] & 0xFFFF, values[1] & 0xFFFF)
-        return round(struct.unpack(">f", raw)[0], 3)
-
-    return None

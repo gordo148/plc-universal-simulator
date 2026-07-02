@@ -1,5 +1,7 @@
 import customtkinter as ctk
 
+from ui.tag_manager import get_input_analog_tags, get_input_bool_tags
+
 
 def create_dashboard_tab(app):
     app.dashboard_frame = ctk.CTkFrame(app.tab_dashboard)
@@ -60,7 +62,7 @@ def update_dashboard(app, last_message=None):
     brand = app.brand_menu.get()
     ip = app.ip_entry.get()
 
-    connected = app.driver is not None and app.driver.is_connected()
+    connected = app.plc_service.is_connected()
 
     if connected:
         app.card_connection.configure(text="● Online", text_color="lime")
@@ -75,11 +77,16 @@ def update_dashboard(app, last_message=None):
     else:
         app.card_pid.configure(text="OFF", text_color="gray")
 
-    total_di = len(app.digital_widgets)
-    on_di = sum(1 for state in app.digital_states.values() if state)
+    digital_tags = get_input_bool_tags(app)
+    analog_tags = get_input_analog_tags(app)
+    total_di = len(digital_tags)
+    on_di = sum(
+        1 for tag in digital_tags
+        if bool(app.tag_runtime.get_value(tag.name, False))
+    )
 
     app.card_di.configure(text=f"{on_di} / {total_di}")
-    app.card_ai.configure(text=str(len(app.analog_widgets)))
+    app.card_ai.configure(text=str(len(analog_tags)))
 
     if last_message:
         app.card_last.configure(text=last_message)

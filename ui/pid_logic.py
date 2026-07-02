@@ -1,8 +1,13 @@
 import time
 from tkinter import messagebox
 
+from ui.dashboard_tab import update_dashboard
+
 
 def write_pid_output(app, value):
+    if not app.is_online():
+        return int(value)
+
     if app.brand_menu.get() == "Siemens":
         byte_address = int(app.pid_out_entry.get())
         return app.driver.write_analog(byte_address, value)
@@ -12,15 +17,13 @@ def write_pid_output(app, value):
 
 
 def start_pid(app):
-    if not app.is_connected():
-        return
-
     app.pid_running = True
     app.pid_integral = 0.0
     app.pid_last_error = 0.0
     app.pid_last_time = time.time()
 
     app.pid_status_label.configure(text="PID ON", text_color="lime")
+    update_dashboard(app, "PID iniciado")
     run_pid_loop(app)
 
 
@@ -29,6 +32,8 @@ def stop_pid(app):
 
     if hasattr(app, "pid_status_label"):
         app.pid_status_label.configure(text="PID OFF", text_color="gray")
+
+    update_dashboard(app, "PID parado")
 
 
 def run_pid_loop(app):
@@ -46,7 +51,8 @@ def run_pid_loop(app):
 
         source = app.pid_pv_menu.get()
         pv_index = int(source.split("_")[1]) - 1
-        pv = float(app.analog_widgets[pv_index]["live"].cget("text"))
+        pv_tag = app.analog_widgets[pv_index]["tag"]
+        pv = float(app.tag_runtime.get_value(pv_tag.name, 0))
 
         now = time.time()
         dt = now - app.pid_last_time

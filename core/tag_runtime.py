@@ -1,0 +1,78 @@
+from dataclasses import dataclass
+from enum import Enum
+import time
+from typing import Any, Iterable
+
+from core.tag_model import TagDefinition
+
+
+class RuntimeValueSource(str, Enum):
+    PLC = "PLC"
+    SIMULATION = "SIMULATION"
+
+
+@dataclass
+class TagRuntime:
+    value: Any = None
+    valid: bool = False
+    updated_at: float | None = None
+    source: RuntimeValueSource | None = None
+
+
+class RuntimeTagCache:
+    """Central store for volatile values, keyed by tag definition name."""
+
+    def __init__(self) -> None:
+        self._values: dict[str, TagRuntime] = {}
+
+    def sync(self, definitions: Iterable[TagDefinition]) -> None:
+        names = {tag.name for tag in definitions}
+        self._values = {
+            name: self._values.get(name, TagRuntime())
+            for name in names
+        }
+
+    def update(
+        self,
+        name: str,
+        value: Any,
+        source: RuntimeValueSource = RuntimeValueSource.SIMULATION,
+    ) -> None:
+        runtime = self._values.setdefault(name, TagRuntime())
+        runtime.value = value
+        runtime.valid = True
+        runtime.updated_at = time.time()
+        runtime.source = source
+
+    def invalidate(self, name: str) -> None:
+        runtime = self._values.setdefault(name, TagRuntime())
+        runtime.valid = False
+
+    def invalidate_all(self) -> None:
+        for runtime in self._values.values():
+            runtime.valid = False
+
+    def invalidate_source(self, source: RuntimeValueSource) -> None:
+        for runtime in self._values.values():
+            if runtime.source == source:
+                runtime.valid = False
+
+    def get(self, name: str) -> TagRuntime | None:
+        return self._values.get(name)
+
+    def get_value(self, name: str, default: Any = None) -> Any:
+        runtime = self.get(name)
+        if runtime is None or not runtime.valid:
+            return default
+        return runtime.value
+
+    def snapshot(self) -> dict[str, TagRuntime]:
+        return {
+            name: TagRuntime(
+                item.value,
+                item.valid,
+                item.updated_at,
+                item.source,
+            )
+            for name, item in self._values.items()
+        }

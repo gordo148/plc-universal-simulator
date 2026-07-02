@@ -148,7 +148,7 @@ def update_trend(app):
             tag.name,
             [None] * (sample_count - 1)
         )
-        values.append(_numeric_value(tag.value))
+        values.append(_numeric_value(app.tag_runtime.get_value(tag.name)))
 
     max_points = 120
     if len(app.trend_data["time"]) > max_points:

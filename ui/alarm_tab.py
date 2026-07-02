@@ -174,14 +174,18 @@ def get_alarm_value(app, source):
     if tag is None:
         return None
 
-    if isinstance(tag.value, bool):
-        return int(tag.value)
+    value = app.tag_runtime.get_value(tag.name)
+    if value is None:
+        return None
 
-    if isinstance(tag.value, (int, float)):
-        return tag.value
+    if isinstance(value, bool):
+        return int(value)
+
+    if isinstance(value, (int, float)):
+        return value
 
     try:
-        return float(tag.value)
+        return float(value)
     except (TypeError, ValueError):
         return 0
 
