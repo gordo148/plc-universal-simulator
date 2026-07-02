@@ -1,0 +1,6 @@
+customtkinter
+python-snap7
+pymodbus
+pyinstaller
+matplotlib
+pillow
