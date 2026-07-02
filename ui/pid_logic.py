@@ -8,12 +8,7 @@ def write_pid_output(app, value):
     if not app.is_online():
         return int(value)
 
-    if app.brand_menu.get() == "Siemens":
-        byte_address = int(app.pid_out_entry.get())
-        return app.driver.write_analog(byte_address, value)
-
-    register_address = int(app.pid_out_entry.get())
-    return app.driver.write_analog(register_address, value)
+    return app.plc_service.write_numeric(app.pid_out_entry.get(), value)
 
 
 def start_pid(app):

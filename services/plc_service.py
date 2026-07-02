@@ -7,6 +7,8 @@ from snap7.util import get_bool, get_int, get_real
 
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
+from drivers.schneider_modbus import SchneiderModbusDriver
+from drivers.siemens_s7 import SiemensS7Driver
 
 
 class PLCService:
@@ -16,13 +18,61 @@ class PLCService:
         runtime_cache: RuntimeTagCache | None = None,
     ) -> None:
         self._driver = driver
+        self._brand: str | None = None
         self.runtime_cache = runtime_cache or RuntimeTagCache()
 
-    def set_driver(self, driver: Any | None) -> None:
-        self._driver = driver
+    def connect(self, brand: str, ip: str, **options) -> bool:
+        self.disconnect()
 
-    def get_driver(self) -> Any | None:
-        return self._driver
+        if brand == "Siemens":
+            driver = SiemensS7Driver()
+            connect_args = (
+                ip,
+                int(options.get("rack", 0)),
+                int(options.get("slot", 1)),
+                int(options.get("db_number", 100)),
+            )
+        elif brand == "Schneider":
+            driver = SchneiderModbusDriver()
+            connect_args = (
+                ip,
+                int(options.get("port", 502)),
+                int(options.get("slave_id", 1)),
+            )
+        else:
+            raise ValueError(f"Unsupported PLC brand: {brand}")
+
+        try:
+            connected = bool(driver.connect(*connect_args))
+        except Exception:
+            try:
+                driver.disconnect()
+            except Exception:
+                pass
+            raise
+
+        if not connected:
+            try:
+                driver.disconnect()
+            except Exception:
+                pass
+            return False
+
+        self._driver = driver
+        self._brand = brand
+        return True
+
+    def disconnect(self) -> None:
+        driver = self._driver
+        self._driver = None
+        self._brand = None
+        self.runtime_cache.invalidate_source(RuntimeValueSource.PLC)
+
+        if driver is not None:
+            try:
+                driver.disconnect()
+            except Exception:
+                pass
 
     def is_connected(self) -> bool:
         if self._driver is None:
@@ -34,7 +84,11 @@ class PLCService:
         except Exception:
             return False
 
-    def scan(self, definitions: Iterable[TagDefinition], brand: str) -> bool:
+    def read(
+        self,
+        definitions: Iterable[TagDefinition],
+        brand: str | None = None,
+    ) -> bool:
         tags = list(definitions)
         self.runtime_cache.sync(tags)
 
@@ -42,9 +96,75 @@ class PLCService:
             self.runtime_cache.invalidate_source(RuntimeValueSource.PLC)
             return False
 
-        if brand == "Siemens":
+        active_brand = brand or self._brand
+        if active_brand == "Siemens":
             return self._scan_siemens(tags)
-        return self._scan_schneider(tags)
+        if active_brand == "Schneider":
+            return self._scan_schneider(tags)
+        return False
+
+    def scan(self, definitions: Iterable[TagDefinition], brand: str | None = None) -> bool:
+        """Compatibility alias for the previous polling API."""
+        return self.read(definitions, brand)
+
+    def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
+        if not self.is_connected() or self._brand is None:
+            return None
+
+        try:
+            if self._brand == "Siemens":
+                byte_index, bit_index = _parse_siemens_address(tag)
+                result = self._driver.write_digital(byte_index, bit_index, bool(value))
+            else:
+                address = _parse_schneider_address(tag)
+                result = self._driver.write_digital(address, bool(value))
+        except Exception:
+            return None
+
+        if result is not None:
+            self.runtime_cache.update(
+                tag.name,
+                bool(result),
+                RuntimeValueSource.PLC,
+            )
+            return bool(result)
+        return None
+
+    def write_numeric(
+        self,
+        target: TagDefinition | str | int,
+        value: int | float,
+    ) -> int | float | None:
+        if not self.is_connected() or self._brand is None:
+            return None
+
+        try:
+            address = self._numeric_address(target)
+            result = self._driver.write_analog(address, value)
+        except Exception:
+            return None
+
+        if result is not None and isinstance(target, TagDefinition):
+            self.runtime_cache.update(
+                target.name,
+                result,
+                RuntimeValueSource.PLC,
+            )
+        return result
+
+    def _numeric_address(self, target: TagDefinition | str | int) -> int:
+        if isinstance(target, TagDefinition):
+            if target.data_type not in ("INT", "REAL"):
+                raise ValueError("Numeric writes require an INT or REAL tag")
+            if self._brand == "Siemens":
+                address, _ = _parse_siemens_address(target)
+                return address
+            return _parse_schneider_address(target)
+
+        address = str(target).strip().upper()
+        if self._brand == "Siemens":
+            return int(address.replace("DBW", "").replace("DBD", ""))
+        return int(address.replace("%MW", "").replace("MW", ""))
 
     def _scan_siemens(self, tags: list[TagDefinition]) -> bool:
         parsed = []

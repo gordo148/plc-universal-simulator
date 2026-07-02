@@ -4,8 +4,6 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
-from drivers.siemens_s7 import SiemensS7Driver
-from drivers.schneider_modbus import SchneiderModbusDriver
 from services.plc_service import PLCService
 
 from ui.header import create_header, SCHNEIDER_MODELS
@@ -39,7 +37,6 @@ class PLCSimulator:
     def __init__(self):
         os.makedirs("configs", exist_ok=True)
 
-        self.driver = None
         self.tag_runtime = RuntimeTagCache()
         self.plc_service = PLCService(runtime_cache=self.tag_runtime)
         self.digital_states = {}
@@ -110,25 +107,24 @@ class PLCSimulator:
 
     def connect(self):
         ip = self.ip_entry.get().strip()
+        brand = self.brand_menu.get()
 
         try:
-            if self.brand_menu.get() == "Siemens":
-                self.driver = SiemensS7Driver()
-                result = self.driver.connect(
+            if brand == "Siemens":
+                result = self.plc_service.connect(
+                    brand,
                     ip,
-                    int(self.rack_entry.get()),
-                    int(self.slot_entry.get()),
-                    int(self.db_entry.get())
+                    rack=self.rack_entry.get(),
+                    slot=self.slot_entry.get(),
+                    db_number=self.db_entry.get(),
                 )
             else:
-                self.driver = SchneiderModbusDriver()
-                result = self.driver.connect(
+                result = self.plc_service.connect(
+                    brand,
                     ip,
-                    int(self.port_entry.get()),
-                    int(self.slave_entry.get())
+                    port=self.port_entry.get(),
+                    slave_id=self.slave_entry.get(),
                 )
-
-            self.plc_service.set_driver(self.driver)
 
             if result:
                 self.status_label.configure(text="● LIGADO", text_color="lime")
@@ -151,16 +147,7 @@ class PLCSimulator:
 
             self.stop_pid()
 
-            driver = self.driver
-            self.driver = None
-            self.plc_service.set_driver(None)
-            self.tag_runtime.invalidate_source(RuntimeValueSource.PLC)
-
-            if driver:
-                try:
-                    driver.disconnect()
-                except Exception:
-                    pass
+            self.plc_service.disconnect()
 
             self.status_label.configure(text="● DESLIGADO", text_color="red")
             update_dashboard(self, "PLC desligado")
@@ -169,7 +156,7 @@ class PLCSimulator:
             pass
 
     def is_connected(self):
-        if self.driver is None or not self.driver.is_connected():
+        if not self.plc_service.is_connected():
             self.status_label.configure(text="● PLC NÃO LIGADO", text_color="red")
             return False
 
@@ -303,20 +290,7 @@ class PLCSimulator:
             update_dashboard(self, "Digital simulada")
             return bool(state)
 
-        try:
-            if self.brand_menu.get() == "Siemens":
-                real_state = self.driver.write_digital(
-                    item["address_data"]["byte"],
-                    item["address_data"]["bit"],
-                    state
-                )
-            else:
-                real_state = self.driver.write_digital(
-                    item["address_data"]["coil"],
-                    state
-                )
-        except Exception:
-            real_state = None
+        real_state = self.plc_service.write_bool(item["tag"], state)
 
         if real_state is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
@@ -325,7 +299,6 @@ class PLCSimulator:
         self.update_digital_ui(
             index,
             real_state,
-            source=RuntimeValueSource.PLC,
         )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(self, "Digital alterada")
@@ -344,9 +317,8 @@ class PLCSimulator:
 
     def write_analog_by_index(self, index, value):
         item = self.analog_widgets[index]
-        driver = self.driver
 
-        if driver is None or not self.is_online():
+        if not self.is_online():
             self.update_analog_ui(
                 index,
                 value,
@@ -359,13 +331,7 @@ class PLCSimulator:
             update_dashboard(self, "Analógica simulada")
             return value
 
-        try:
-            if self.brand_menu.get() == "Siemens":
-                real_value = driver.write_analog(item["address_data"]["byte"], value)
-            else:
-                real_value = driver.write_analog(item["address_data"]["register"], value)
-        except Exception:
-            real_value = None
+        real_value = self.plc_service.write_numeric(item["tag"], value)
 
         if real_value is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
@@ -374,7 +340,6 @@ class PLCSimulator:
         self.update_analog_ui(
             index,
             real_value,
-            source=RuntimeValueSource.PLC,
         )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(self, "Analógica alterada")
@@ -393,7 +358,7 @@ class PLCSimulator:
             return
 
         try:
-            self.plc_service.scan(self.tags, self.brand_menu.get())
+            self.plc_service.read(self.tags)
             self.update_runtime_widgets()
             update_feedback_values(self)
             update_dashboard(self)
