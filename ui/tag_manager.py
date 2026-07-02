@@ -178,6 +178,10 @@ def set_tag_flag(app, tag, field, value):
 
     if field == "enabled_sim":
         app.generate_signals()
+    elif field == "enabled_trend" and hasattr(app, "trend_selector_frame"):
+        from ui.trend_tab import create_ai_checkboxes
+
+        create_ai_checkboxes(app)
 
 
 def delete_tag(app, tag):

@@ -1,4 +1,5 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from typing import Any
 
 
 @dataclass
@@ -11,9 +12,12 @@ class Tag:
     enabled_trend: bool = False
     enabled_alarm: bool = False
     enabled_dashboard: bool = False
+    value: Any = field(default=0, repr=False, compare=False)
 
     def to_dict(self):
-        return asdict(self)
+        data = asdict(self)
+        data.pop("value", None)
+        return data
 
     @staticmethod
     def from_dict(data):

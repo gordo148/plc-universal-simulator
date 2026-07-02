@@ -202,6 +202,9 @@ class PLCSimulator:
         for i, tag in enumerate(get_input_analog_tags(self)):
             create_analog_row(self, i, tag=tag)
 
+        if hasattr(self, "feedback_table"):
+            refresh_feedback_table(self)
+
         self.update_pid_sources()
 
         if hasattr(self, "trend_selector_frame"):
@@ -404,6 +407,7 @@ class PLCSimulator:
         item = self.digital_widgets[index]
 
         self.digital_states[index] = state
+        item["tag"].value = state
         name = item["name_entry"].get()
 
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
@@ -413,6 +417,7 @@ class PLCSimulator:
     def update_analog_ui(self, index, value):
         item = self.analog_widgets[index]
 
+        item["tag"].value = value
         item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")
         item["live"].configure(text=str(value))

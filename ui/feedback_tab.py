@@ -67,7 +67,13 @@ def create_feedback_row(app, tag):
     row = ctk.CTkFrame(app.feedback_table)
     row.pack(fill="x", padx=5, pady=4)
 
-    led = ctk.CTkLabel(row, text="●", text_color="gray", font=("Arial", 24), width=160)
+    led = ctk.CTkLabel(
+        row,
+        text="●" if tag.data_type == "BOOL" else "",
+        text_color="gray",
+        font=("Arial", 24),
+        width=160
+    )
     led.grid(row=0, column=0, padx=4, pady=6)
 
     ctk.CTkLabel(row, text=tag.name, width=160).grid(row=0, column=1, padx=4)
@@ -100,15 +106,20 @@ def update_feedback_values(app):
         value = read_feedback_value(app, tag)
 
         if value is None:
-            row["led"].configure(text="●", text_color="gray")
+            row["led"].configure(
+                text="●" if tag.data_type == "BOOL" else "",
+                text_color="gray"
+            )
             row["value"].configure(text="---")
             continue
+
+        tag.value = value
 
         if tag.data_type == "BOOL":
             row["led"].configure(text="●", text_color="lime" if value else "gray")
             row["value"].configure(text="1" if value else "0")
         else:
-            row["led"].configure(text="●", text_color="cyan")
+            row["led"].configure(text="")
             row["value"].configure(text=str(value))
 
 
@@ -180,5 +191,3 @@ def read_schneider_feedback(app, tag):
         return round(struct.unpack(">f", raw)[0], 3)
 
     return None
-
-

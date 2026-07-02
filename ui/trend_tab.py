@@ -1,9 +1,11 @@
-import time
 import csv
+import time
 import customtkinter as ctk
 from tkinter import filedialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+from ui.tag_manager import get_trend_tags
 
 
 COLORS = [
@@ -21,17 +23,9 @@ COLORS = [
 def create_trend_tab(app):
     app.trend_running = False
     app.trend_start_time = time.time()
-
-    app.trend_data = {
-        "time": [],
-        "ai": {},
-        "pid_pv": [],
-        "pid_out": []
-    }
-
-    app.trend_ai_vars = {}
-    app.trend_show_pid_pv = ctk.BooleanVar(value=True)
-    app.trend_show_pid_out = ctk.BooleanVar(value=True)
+    app.trend_data = {"time": [], "tags": {}}
+    app.trend_tag_vars = {}
+    app.trend_curve_widgets = []
     app.trend_auto_scale = ctk.BooleanVar(value=True)
 
     frame = ctk.CTkFrame(app.tab_trends)
@@ -60,33 +54,14 @@ def create_trend_tab(app):
         command=lambda: redraw_trend(app)
     ).pack(side="left", padx=12)
 
-    selector = ctk.CTkFrame(frame)
-    selector.pack(fill="x", padx=10, pady=5)
-
-    app.trend_selector_frame = selector
-
-    ctk.CTkCheckBox(
-        selector,
-        text="PID PV",
-        variable=app.trend_show_pid_pv,
-        command=lambda: redraw_trend(app)
-    ).pack(side="left", padx=8)
-
-    ctk.CTkCheckBox(
-        selector,
-        text="PID OUT",
-        variable=app.trend_show_pid_out,
-        command=lambda: redraw_trend(app)
-    ).pack(side="left", padx=8)
-
+    app.trend_selector_frame = ctk.CTkFrame(frame)
+    app.trend_selector_frame.pack(fill="x", padx=10, pady=5)
     create_ai_checkboxes(app)
 
     app.trend_fig = Figure(figsize=(10, 5), dpi=100)
     app.trend_ax = app.trend_fig.add_subplot(111)
-
     app.trend_fig.set_facecolor("white")
     app.trend_ax.set_facecolor("white")
-
     configure_axes(app)
 
     app.trend_canvas = FigureCanvasTkAgg(app.trend_fig, master=frame)
@@ -95,39 +70,50 @@ def create_trend_tab(app):
 
 
 def create_ai_checkboxes(app):
-    for widget in app.trend_selector_frame.winfo_children():
-        text = widget.cget("text") if hasattr(widget, "cget") else ""
-        if str(text).startswith("AI_"):
-            widget.destroy()
+    """Refresh curve selectors from trend-enabled tags.
 
-    app.trend_ai_vars.clear()
+    The historical function name is retained for callers outside this module.
+    """
+    previous_selection = {
+        name: variable.get()
+        for name, variable in app.trend_tag_vars.items()
+    }
 
-    for i, item in enumerate(app.analog_widgets):
-        name = item["name_entry"].get()
-        var = ctk.BooleanVar(value=True)
-        app.trend_ai_vars[name] = var
+    for widget in app.trend_curve_widgets:
+        widget.destroy()
 
-        ctk.CTkCheckBox(
+    app.trend_curve_widgets.clear()
+    app.trend_tag_vars.clear()
+
+    for tag in get_trend_tags(app):
+        variable = ctk.BooleanVar(value=previous_selection.get(tag.name, True))
+        app.trend_tag_vars[tag.name] = variable
+
+        checkbox = ctk.CTkCheckBox(
             app.trend_selector_frame,
-            text=name,
-            variable=var,
+            text=tag.name,
+            variable=variable,
             command=lambda: redraw_trend(app)
-        ).pack(side="left", padx=8)
+        )
+        checkbox.pack(side="left", padx=8)
+        app.trend_curve_widgets.append(checkbox)
 
 
 def configure_axes(app):
-    app.trend_ax.set_title("Trend Analógicas / PID")
+    app.trend_ax.set_title("Trend de Tags")
     app.trend_ax.set_xlabel("Tempo [s]")
-    app.trend_ax.set_ylabel("Valor RAW")
+    app.trend_ax.set_ylabel("Valor")
     app.trend_ax.grid(True, color="#cccccc", linestyle="-", linewidth=0.7)
 
 
 def start_trend(app):
     create_ai_checkboxes(app)
 
+    if app.trend_running:
+        return
+
     app.trend_running = True
     app.trend_status.configure(text="Trend ON", text_color="lime")
-
     update_trend(app)
 
 
@@ -137,13 +123,7 @@ def stop_trend(app):
 
 
 def clear_trend(app):
-    app.trend_data = {
-        "time": [],
-        "ai": {},
-        "pid_pv": [],
-        "pid_out": []
-    }
-
+    app.trend_data = {"time": [], "tags": {}}
     app.trend_start_time = time.time()
     redraw_trend(app)
 
@@ -155,86 +135,67 @@ def update_trend(app):
     elapsed = round(time.time() - app.trend_start_time, 1)
     app.trend_data["time"].append(elapsed)
 
-    for item in app.analog_widgets:
-        name = item["name_entry"].get()
+    enabled_tags = get_trend_tags(app)
+    enabled_names = {tag.name for tag in enabled_tags}
 
-        try:
-            value = int(item["live"].cget("text"))
-        except Exception:
-            value = 0
+    for name in list(app.trend_data["tags"]):
+        if name not in enabled_names:
+            del app.trend_data["tags"][name]
 
-        if name not in app.trend_data["ai"]:
-            app.trend_data["ai"][name] = []
-
-        app.trend_data["ai"][name].append(value)
-
-    try:
-        pid_pv = int(app.pid_pv_label.cget("text").replace("PV:", "").strip())
-    except Exception:
-        pid_pv = 0
-
-    try:
-        pid_out = int(app.pid_out_label.cget("text").replace("OUT:", "").strip())
-    except Exception:
-        pid_out = 0
-
-    app.trend_data["pid_pv"].append(pid_pv)
-    app.trend_data["pid_out"].append(pid_out)
+    sample_count = len(app.trend_data["time"])
+    for tag in enabled_tags:
+        values = app.trend_data["tags"].setdefault(
+            tag.name,
+            [None] * (sample_count - 1)
+        )
+        values.append(_numeric_value(tag.value))
 
     max_points = 120
-
     if len(app.trend_data["time"]) > max_points:
         app.trend_data["time"] = app.trend_data["time"][-max_points:]
-
-        for key in app.trend_data["ai"]:
-            app.trend_data["ai"][key] = app.trend_data["ai"][key][-max_points:]
-
-        app.trend_data["pid_pv"] = app.trend_data["pid_pv"][-max_points:]
-        app.trend_data["pid_out"] = app.trend_data["pid_out"][-max_points:]
+        for name in app.trend_data["tags"]:
+            app.trend_data["tags"][name] = app.trend_data["tags"][name][-max_points:]
 
     redraw_trend(app)
-
     app.app.after(1000, lambda: update_trend(app))
+
+
+def _numeric_value(value):
+    if isinstance(value, bool):
+        return int(value)
+
+    if isinstance(value, (int, float)):
+        return value
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def redraw_trend(app):
     app.trend_ax.clear()
     configure_axes(app)
 
-    t = app.trend_data["time"]
+    times = app.trend_data["time"]
+    enabled_names = {tag.name for tag in get_trend_tags(app)}
 
-    for idx, (name, values) in enumerate(app.trend_data["ai"].items()):
-        show_curve = app.trend_ai_vars.get(name)
+    for index, (name, values) in enumerate(app.trend_data["tags"].items()):
+        if name not in enabled_names:
+            continue
 
+        show_curve = app.trend_tag_vars.get(name)
         if show_curve is not None and not show_curve.get():
             continue
 
-        if len(values) == len(t):
+        if len(values) == len(times):
             app.trend_ax.plot(
-                t,
+                times,
                 values,
                 label=name,
                 linewidth=2,
-                color=COLORS[idx % len(COLORS)]
+                color=COLORS[index % len(COLORS)]
             )
-
-    if app.trend_show_pid_pv.get() and len(app.trend_data["pid_pv"]) == len(t):
-        app.trend_ax.plot(
-            t,
-            app.trend_data["pid_pv"],
-            label="PID PV",
-            linewidth=2.5,
-            color="black"
-        )
-
-    if app.trend_show_pid_out.get() and len(app.trend_data["pid_out"]) == len(t):
-        app.trend_ax.plot(
-            t,
-            app.trend_data["pid_out"],
-            label="PID OUT",
-            linewidth=2.5,
-            color="red"
-        )
 
     if app.trend_auto_scale.get():
         app.trend_ax.relim()
@@ -242,7 +203,7 @@ def redraw_trend(app):
     else:
         app.trend_ax.set_ylim(0, 27648)
 
-    if t:
+    if app.trend_ax.lines:
         app.trend_ax.legend(
             bbox_to_anchor=(1.02, 1),
             loc="upper left",
@@ -263,26 +224,22 @@ def export_csv(app):
     if not file_path:
         return
 
-    ai_names = list(app.trend_data["ai"].keys())
+    enabled_names = {tag.name for tag in get_trend_tags(app)}
+    tag_names = [
+        name for name in app.trend_data["tags"]
+        if name in enabled_names
+    ]
 
     with open(file_path, "w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
+        writer.writerow(["time_s"] + tag_names)
 
-        header = ["time_s"] + ai_names + ["pid_pv", "pid_out"]
-        writer.writerow(header)
-
-        total = len(app.trend_data["time"])
-
-        for i in range(total):
-            row = [app.trend_data["time"][i]]
-
-            for name in ai_names:
-                values = app.trend_data["ai"].get(name, [])
-                row.append(values[i] if i < len(values) else "")
-
-            row.append(app.trend_data["pid_pv"][i] if i < len(app.trend_data["pid_pv"]) else "")
-            row.append(app.trend_data["pid_out"][i] if i < len(app.trend_data["pid_out"]) else "")
-
+        for index, elapsed in enumerate(app.trend_data["time"]):
+            row = [elapsed]
+            for name in tag_names:
+                values = app.trend_data["tags"].get(name, [])
+                value = values[index] if index < len(values) else ""
+                row.append("" if value is None else value)
             writer.writerow(row)
 
     app.status_label.configure(text="● TREND EXPORTADA", text_color="lime")
