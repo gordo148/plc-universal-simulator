@@ -182,6 +182,10 @@ def set_tag_flag(app, tag, field, value):
         from ui.trend_tab import create_ai_checkboxes
 
         create_ai_checkboxes(app)
+    elif field == "enabled_alarm" and hasattr(app, "alarm_source_menu"):
+        from ui.alarm_tab import update_alarm_sources
+
+        update_alarm_sources(app)
 
 
 def delete_tag(app, tag):

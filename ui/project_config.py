@@ -229,6 +229,7 @@ def reload_alarms(app, alarms):
         return
 
     from ui.alarm_tab import create_alarm_row, update_alarm_status
+    from ui.tag_manager import get_alarm_tags
 
     for row in app.alarm_rows:
         try:
@@ -239,9 +240,14 @@ def reload_alarms(app, alarms):
     app.alarms.clear()
     app.alarm_rows.clear()
 
+    enabled_sources = [tag.name for tag in get_alarm_tags(app)]
+
     for alarm_config in alarms:
         alarm = {
-            "source": alarm_config.get("source", "AI_01"),
+            "source": alarm_config.get(
+                "source",
+                enabled_sources[0] if enabled_sources else ""
+            ),
             "type": alarm_config.get("type", "HIGH"),
             "limit": int(alarm_config.get("limit", 20000)),
             "active": False,

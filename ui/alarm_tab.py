@@ -1,6 +1,8 @@
 import time
 import customtkinter as ctk
 
+from ui.tag_manager import get_alarm_tags
+
 
 def create_alarm_tab(app):
     app.alarms = []
@@ -16,7 +18,7 @@ def create_alarm_tab(app):
 
     app.alarm_source_menu = ctk.CTkOptionMenu(
         controls,
-        values=["AI_01"]
+        values=[tag.name for tag in get_alarm_tags(app)]
     )
     app.alarm_source_menu.pack(side="left", padx=5)
 
@@ -81,19 +83,14 @@ def update_alarm_sources(app):
     if not hasattr(app, "alarm_source_menu"):
         return
 
-    values = []
-
-    for i in range(len(app.analog_widgets)):
-        values.append(f"AI_{i + 1:02d}")
-
-    values.append("PID PV")
-    values.append("PID OUT")
-
-    if not values:
-        values = ["AI_01"]
+    current_source = app.alarm_source_menu.get()
+    values = [tag.name for tag in get_alarm_tags(app)]
 
     app.alarm_source_menu.configure(values=values)
-    app.alarm_source_menu.set(values[0])
+    if current_source in values:
+        app.alarm_source_menu.set(current_source)
+    else:
+        app.alarm_source_menu.set(values[0] if values else "")
 
 
 def add_alarm(app):
@@ -101,6 +98,9 @@ def add_alarm(app):
         source = app.alarm_source_menu.get()
         alarm_type = app.alarm_type_menu.get()
         limit = int(app.alarm_limit_entry.get())
+
+        if source not in {tag.name for tag in get_alarm_tags(app)}:
+            raise ValueError("Alarm source is not enabled")
     except Exception:
         app.status_label.configure(text="● ERRO ALARME", text_color="orange")
         return
@@ -167,21 +167,23 @@ def acknowledge_alarm(app, alarm):
 
 
 def get_alarm_value(app, source):
+    tag = next(
+        (tag for tag in get_alarm_tags(app) if tag.name == source),
+        None
+    )
+    if tag is None:
+        return None
+
+    if isinstance(tag.value, bool):
+        return int(tag.value)
+
+    if isinstance(tag.value, (int, float)):
+        return tag.value
+
     try:
-        if source.startswith("AI_"):
-            index = int(source.split("_")[1]) - 1
-            return int(app.analog_widgets[index]["live"].cget("text"))
-
-        if source == "PID PV":
-            return int(app.pid_pv_label.cget("text").replace("PV:", "").strip())
-
-        if source == "PID OUT":
-            return int(app.pid_out_label.cget("text").replace("OUT:", "").strip())
-
-    except Exception:
+        return float(tag.value)
+    except (TypeError, ValueError):
         return 0
-
-    return 0
 
 
 def start_alarm_scan(app):
@@ -194,6 +196,12 @@ def scan_alarms(app):
 
     for alarm in app.alarms:
         value = get_alarm_value(app, alarm["source"])
+
+        if value is None:
+            alarm["last_value"] = 0
+            alarm["active"] = False
+            continue
+
         alarm["last_value"] = value
 
         was_active = alarm["active"]
