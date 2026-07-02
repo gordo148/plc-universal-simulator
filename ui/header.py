@@ -26,22 +26,12 @@ def create_header(app):
     app.ip_entry.insert(0, "192.168.1.10")
     app.ip_entry.grid(row=0, column=3, padx=5)
 
-    ctk.CTkLabel(app.header, text="Digitais").grid(row=0, column=4, padx=5)
-    app.num_di_entry = ctk.CTkEntry(app.header, width=70)
-    app.num_di_entry.insert(0, "10")
-    app.num_di_entry.grid(row=0, column=5, padx=5)
-
-    ctk.CTkLabel(app.header, text="Analógicas").grid(row=0, column=6, padx=5)
-    app.num_ai_entry = ctk.CTkEntry(app.header, width=70)
-    app.num_ai_entry.insert(0, "5")
-    app.num_ai_entry.grid(row=0, column=7, padx=5)
-
-    ctk.CTkButton(app.header, text="Ligar", command=app.connect, width=80).grid(row=0, column=8, padx=4)
-    ctk.CTkButton(app.header, text="Desligar", command=app.disconnect, width=80).grid(row=0, column=9, padx=4)
-    ctk.CTkButton(app.header, text="Gerar", command=app.generate_signals, width=80).grid(row=0, column=10, padx=4)
-    ctk.CTkButton(app.header, text="Reset", command=app.reset_all, width=80).grid(row=0, column=11, padx=4)
-    ctk.CTkButton(app.header, text="Guardar", command=app.save_project, width=80).grid(row=0, column=12, padx=4)
-    ctk.CTkButton(app.header, text="Carregar", command=app.load_project, width=80).grid(row=0, column=13, padx=4)
+    ctk.CTkButton(app.header, text="Ligar", command=app.connect, width=80).grid(row=0, column=4, padx=4)
+    ctk.CTkButton(app.header, text="Desligar", command=app.disconnect, width=80).grid(row=0, column=5, padx=4)
+    ctk.CTkButton(app.header, text="Gerar", command=app.generate_signals, width=80).grid(row=0, column=6, padx=4)
+    ctk.CTkButton(app.header, text="Reset", command=app.reset_all, width=80).grid(row=0, column=7, padx=4)
+    ctk.CTkButton(app.header, text="Guardar", command=app.save_project, width=80).grid(row=0, column=8, padx=4)
+    ctk.CTkButton(app.header, text="Carregar", command=app.load_project, width=80).grid(row=0, column=9, padx=4)
 
     app.status_label = ctk.CTkLabel(
         app.header,
@@ -49,10 +39,10 @@ def create_header(app):
         text_color="red",
         font=("Arial", 14, "bold")
     )
-    app.status_label.grid(row=0, column=14, padx=15)
+    app.status_label.grid(row=0, column=10, padx=15)
 
     app.brand_frame = ctk.CTkFrame(app.header)
-    app.brand_frame.grid(row=1, column=0, columnspan=15, sticky="ew", padx=5, pady=10)
+    app.brand_frame.grid(row=1, column=0, columnspan=11, sticky="ew", padx=5, pady=10)
 
     app.create_siemens_options = lambda: create_siemens_options(app)
     app.create_schneider_options = lambda: create_schneider_options(app)

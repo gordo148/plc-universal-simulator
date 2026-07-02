@@ -2,27 +2,23 @@ import customtkinter as ctk
 from ui.analog_profiles import start_profile, stop_profile
 
 
-def create_analog_row(app, index):
+def create_analog_row(app, index, tag):
     card = ctk.CTkFrame(app.analog_scroll, corner_radius=15)
     card.pack(fill="x", padx=10, pady=10)
 
     top = ctk.CTkFrame(card)
     top.pack(fill="x", padx=10, pady=8)
 
-    if app.brand_menu.get() == "Siemens":
-        byte_index, visible = app.get_siemens_analog_address(index)
-        address_data = {"byte": byte_index}
-        protocol_address = visible
-    else:
-        address, visible = app.get_schneider_analog_address(index)
-        address_data = {"register": address}
-        protocol_address = f"Register {address}"
+    visible = tag.address
+    protocol_address = tag.address
+    address_data = parse_analog_address(app, tag.address)
+    name = tag.name
 
     ctk.CTkLabel(top, text=visible, width=100, font=("Arial", 14, "bold")).pack(side="left", padx=8)
     ctk.CTkLabel(top, text=protocol_address, width=120, text_color="gray").pack(side="left", padx=8)
 
     name_entry = ctk.CTkEntry(top, width=250)
-    name_entry.insert(0, f"AI_{index + 1:02d}")
+    name_entry.insert(0, name)
     name_entry.pack(side="left", padx=8)
 
     value_label = ctk.CTkLabel(top, text="0 RAW", width=110, font=("Arial", 18, "bold"), text_color="cyan")
@@ -103,5 +99,17 @@ def create_analog_row(app, index):
         "max_entry": max_entry,
         "step_entry": step_entry,
         "interval_entry": interval_entry,
-        "direction": 1
+        "direction": 1,
+        "tag": tag
     })
+
+
+def parse_analog_address(app, address):
+    address = address.strip().upper()
+
+    if app.brand_menu.get() == "Siemens":
+        address = address.replace("DBW", "").replace("DBD", "")
+        return {"byte": int(address)}
+
+    address = address.replace("%MW", "").replace("MW", "")
+    return {"register": int(address)}

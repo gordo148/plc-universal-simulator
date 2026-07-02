@@ -1,14 +1,15 @@
 import json
 from tkinter import filedialog
+from core.tag_model import Tag
 from ui.header import SCHNEIDER_MODELS
+from ui.tag_manager import refresh_tag_table
 
 
 def save_project(app):
     config = {
+        "tags": [tag.to_dict() for tag in getattr(app, "tags", [])],
         "brand": app.brand_menu.get(),
         "ip": app.ip_entry.get(),
-        "num_di": app.num_di_entry.get(),
-        "num_ai": app.num_ai_entry.get(),
 
         "digitals": [],
         "analogs": [],
@@ -95,6 +96,15 @@ def load_project(app):
     with open(file_path, "r", encoding="utf-8") as file:
         config = json.load(file)
 
+    app.tags = [
+        Tag.from_dict(tag_data)
+        for tag_data in config.get("tags", [])
+        if isinstance(tag_data, dict)
+    ]
+
+    if hasattr(app, "tag_table"):
+        refresh_tag_table(app)
+
     brand = config.get("brand", "Siemens")
 
     app.brand_menu.set(brand)
@@ -102,12 +112,6 @@ def load_project(app):
 
     app.ip_entry.delete(0, "end")
     app.ip_entry.insert(0, config.get("ip", "192.168.1.10"))
-
-    app.num_di_entry.delete(0, "end")
-    app.num_di_entry.insert(0, config.get("num_di", "10"))
-
-    app.num_ai_entry.delete(0, "end")
-    app.num_ai_entry.insert(0, config.get("num_ai", "5"))
 
     if brand == "Siemens":
         siemens = config.get("siemens", {})

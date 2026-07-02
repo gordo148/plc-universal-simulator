@@ -1,7 +1,7 @@
 import customtkinter as ctk
 
 
-def create_digital_row(app, index, tag=None):
+def create_digital_row(app, index, tag):
     row = ctk.CTkFrame(app.digital_scroll, corner_radius=15)
     row.pack(fill="x", padx=10, pady=6)
 
@@ -10,22 +10,10 @@ def create_digital_row(app, index, tag=None):
     led = ctk.CTkLabel(row, text="●", text_color="gray", font=("Arial", 26))
     led.grid(row=0, column=0, padx=10, pady=8)
 
-    if tag is not None:
-        visible = tag.address
-        protocol_address = tag.address
-        address_data = parse_digital_address(app, tag.address)
-        name = tag.name
-    else:
-        if app.brand_menu.get() == "Siemens":
-            byte_index, bit_index, visible = app.get_siemens_digital_address(index)
-            address_data = {"byte": byte_index, "bit": bit_index}
-            protocol_address = visible
-        else:
-            address, visible = app.get_schneider_digital_address(index)
-            address_data = {"coil": address}
-            protocol_address = f"Coil {address}"
-
-        name = f"DI_{index + 1:02d}"
+    visible = tag.address
+    protocol_address = tag.address
+    address_data = parse_digital_address(app, tag.address)
+    name = tag.name
 
     ctk.CTkLabel(row, text=visible, width=120, font=("Arial", 14, "bold")).grid(row=0, column=1, padx=10)
     ctk.CTkLabel(row, text=protocol_address, width=120, text_color="gray").grid(row=0, column=2, padx=10)

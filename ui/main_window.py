@@ -19,7 +19,11 @@ from ui.project_config import save_project, load_project
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
 from ui.trend_tab import create_trend_tab, stop_trend, create_ai_checkboxes
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
-from ui.tag_manager import create_tag_manager_tab, get_input_bool_tags
+from ui.tag_manager import (
+    create_tag_manager_tab,
+    get_input_analog_tags,
+    get_input_bool_tags,
+)
 from ui.feedback_tab import create_feedback_tab, refresh_feedback_table
 
 ctk.set_appearance_mode("dark")
@@ -192,27 +196,11 @@ class PLCSimulator:
     def generate_signals(self):
         self.clear_signal_frames()
 
-        bool_tags = get_input_bool_tags(self)
+        for i, tag in enumerate(get_input_bool_tags(self)):
+            create_digital_row(self, i, tag=tag)
 
-        if bool_tags:
-            for i, tag in enumerate(bool_tags):
-                create_digital_row(self, i, tag=tag)
-        else:
-            try:
-                num_di = self.get_num_di()
-            except Exception:
-                num_di = 0
-
-            for i in range(num_di):
-                create_digital_row(self, i)
-
-        try:
-            num_ai = self.get_num_ai()
-        except Exception:
-            num_ai = 0
-
-        for i in range(num_ai):
-            create_analog_row(self, i)
+        for i, tag in enumerate(get_input_analog_tags(self)):
+            create_analog_row(self, i, tag=tag)
 
         self.update_pid_sources()
 
@@ -234,37 +222,6 @@ class PLCSimulator:
 
         self.pid_pv_menu.configure(values=values)
         self.pid_pv_menu.set(values[0])
-
-    def get_num_di(self):
-        return int(self.num_di_entry.get())
-
-    def get_num_ai(self):
-        return int(self.num_ai_entry.get())
-
-    def get_siemens_digital_address(self, index):
-        byte_index = index // 8
-        bit_index = index % 8
-        return byte_index, bit_index, f"DBX{byte_index}.{bit_index}"
-
-    def get_siemens_analog_address(self, index):
-        digital_bytes = (self.get_num_di() + 7) // 8
-        analog_start_byte = digital_bytes
-
-        if analog_start_byte % 2 != 0:
-            analog_start_byte += 1
-
-        byte_index = analog_start_byte + index * 2
-        return byte_index, f"DBW{byte_index}"
-
-    def get_schneider_digital_address(self, index):
-        start = int(self.coil_start_entry.get())
-        address = start + index
-        return address, f"%M{address}"
-
-    def get_schneider_analog_address(self, index):
-        start = int(self.reg_start_entry.get())
-        address = start + index
-        return address, f"%MW{address}"
 
     def update_digital_name(self, index):
         item = self.digital_widgets[index]
