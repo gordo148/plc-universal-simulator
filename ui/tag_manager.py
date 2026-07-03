@@ -1,4 +1,8 @@
+import csv
 import customtkinter as ctk
+import re
+from tkinter import filedialog, messagebox
+
 from core.tag_model import Tag
 
 
@@ -13,6 +17,20 @@ COL_WIDTHS = {
     "dash": 70,
     "delete": 90,
 }
+
+TAG_CSV_FIELDS = [
+    "name",
+    "data_type",
+    "direction",
+    "address",
+    "enabled_sim",
+    "enabled_trend",
+    "enabled_alarm",
+    "enabled_dashboard",
+]
+
+TRUE_CSV_VALUES = {"1", "true", "yes"}
+FALSE_CSV_VALUES = {"0", "false", "no"}
 
 
 def create_tag_manager_tab(app):
@@ -32,6 +50,7 @@ def create_tag_manager_tab(app):
     app.tag_type_menu = ctk.CTkOptionMenu(
         controls,
         values=["BOOL", "INT", "REAL"],
+        command=lambda _value: update_tag_address_context(app),
         width=90
     )
     app.tag_type_menu.set("BOOL")
@@ -40,6 +59,7 @@ def create_tag_manager_tab(app):
     app.tag_direction_menu = ctk.CTkOptionMenu(
         controls,
         values=["Input", "Feedback", "Output", "Internal"],
+        command=lambda _value: update_tag_address_context(app),
         width=120
     )
     app.tag_direction_menu.set("Input")
@@ -48,6 +68,23 @@ def create_tag_manager_tab(app):
     app.tag_address_entry = ctk.CTkEntry(controls, width=140)
     app.tag_address_entry.insert(0, "DBX0.0")
     app.tag_address_entry.pack(side="left", padx=5)
+    app.tag_address_manual_edit = False
+    app.tag_last_suggested_address = "DBX0.0"
+    app.tag_address_entry.bind(
+        "<KeyRelease>",
+        lambda _event: on_tag_address_edited(app),
+    )
+    app.tag_address_entry.bind(
+        "<FocusOut>",
+        lambda _event: on_tag_address_edited(app),
+    )
+
+    ctk.CTkButton(
+        controls,
+        text="Suggest Address",
+        command=lambda: suggest_tag_address(app),
+        width=125,
+    ).pack(side="left", padx=5)
 
     ctk.CTkButton(
         controls,
@@ -62,6 +99,28 @@ def create_tag_manager_tab(app):
         command=lambda: app.generate_signals(),
         width=130
     ).pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        controls,
+        text="Import CSV",
+        command=lambda: import_tags_csv(app),
+        width=110,
+    ).pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        controls,
+        text="Export CSV",
+        command=lambda: export_tags_csv(app),
+        width=110,
+    ).pack(side="left", padx=5)
+
+    app.tag_validation_label = ctk.CTkLabel(
+        frame,
+        text="",
+        text_color="gray",
+        anchor="w",
+    )
+    app.tag_validation_label.pack(fill="x", padx=15, pady=(0, 5))
 
     header = ctk.CTkFrame(frame)
     header.pack(fill="x", padx=10, pady=(10, 0))
@@ -80,6 +139,7 @@ def create_tag_manager_tab(app):
     app.tag_table.pack(fill="both", expand=True, padx=10, pady=10)
 
     refresh_tag_table(app)
+    update_tag_address_context(app)
 
 
 def create_header_cell(parent, text, column, width):
@@ -93,11 +153,25 @@ def create_header_cell(parent, text, column, width):
 
 
 def add_tag(app):
+    data_type = app.tag_type_menu.get()
+    address = app.tag_address_entry.get().strip().upper()
+    valid, validation_message = validate_tag_address(
+        app.brand_menu.get(),
+        data_type,
+        address,
+    )
+    if not valid:
+        app.tag_validation_label.configure(
+            text=validation_message,
+            text_color="red",
+        )
+        return
+
     tag = Tag(
         name=app.tag_name_entry.get(),
-        data_type=app.tag_type_menu.get(),
+        data_type=data_type,
         direction=app.tag_direction_menu.get(),
-        address=app.tag_address_entry.get(),
+        address=address,
         enabled_sim=True if app.tag_direction_menu.get() == "Input" else False,
         enabled_trend=True,
         enabled_alarm=False,
@@ -106,7 +180,348 @@ def add_tag(app):
 
     app.tags.append(tag)
     refresh_tag_table(app)
+    app.tag_address_manual_edit = False
     app.generate_signals()
+
+
+def validate_tag_address(brand, data_type, address):
+    brand = str(brand).strip()
+    data_type = str(data_type).strip().upper()
+    address = str(address).strip().upper()
+
+    if brand == "Siemens":
+        patterns = {
+            "BOOL": (r"DBX\d+\.[0-7]", "BOOL Siemens requer DBX byte.bit (ex.: DBX0.0)"),
+            "INT": (r"DBW\d+", "INT Siemens requer DBW byte (ex.: DBW0)"),
+            "REAL": (r"DBD\d+", "REAL Siemens requer DBD byte (ex.: DBD0)"),
+        }
+    elif brand == "Schneider":
+        patterns = {
+            "BOOL": (r"%M\d+", "BOOL Schneider requer %M index (ex.: %M0)"),
+            "INT": (r"%MW\d+", "INT Schneider requer %MW index (ex.: %MW0)"),
+            "REAL": (r"%MW\d+", "REAL Schneider requer %MW index e ocupa 2 registos"),
+        }
+    else:
+        return False, f"Marca PLC não suportada: {brand}"
+
+    rule = patterns.get(data_type)
+    if rule is None:
+        return False, f"Tipo de dados não suportado: {data_type}"
+
+    pattern, error_message = rule
+    if re.fullmatch(pattern, address) is None:
+        return False, error_message
+
+    if brand == "Schneider" and data_type == "REAL":
+        return True, "Endereço válido; REAL ocupa 2 registos %MW"
+    return True, "Endereço válido"
+
+
+def suggest_tag_address(app):
+    address = suggest_address(
+        app.brand_menu.get(),
+        app.tag_type_menu.get(),
+        app.tags,
+    )
+    app.tag_address_entry.delete(0, "end")
+    app.tag_address_entry.insert(0, address)
+    app.tag_address_manual_edit = False
+    app.tag_last_suggested_address = address
+
+    _, message = validate_tag_address(
+        app.brand_menu.get(),
+        app.tag_type_menu.get(),
+        address,
+    )
+    app.tag_validation_label.configure(
+        text=f"Sugestão: {address} — {message}",
+        text_color="cyan",
+    )
+
+
+def on_tag_address_edited(app):
+    address = app.tag_address_entry.get().strip()
+    last_suggestion = getattr(app, "tag_last_suggested_address", "")
+    app.tag_address_manual_edit = (
+        bool(address)
+        and address.upper() != last_suggestion.upper()
+    )
+    validate_current_tag_address(app)
+
+
+def validate_current_tag_address(app):
+    address = app.tag_address_entry.get().strip()
+    if not address:
+        app.tag_validation_label.configure(
+            text="Endereço vazio — use Suggest Address ou introduza um endereço",
+            text_color="orange",
+        )
+        return False
+
+    valid, message = validate_tag_address(
+        app.brand_menu.get(),
+        app.tag_type_menu.get(),
+        address,
+    )
+    app.tag_validation_label.configure(
+        text=message,
+        text_color="lime" if valid else "red",
+    )
+    return valid
+
+
+def update_tag_address_context(app):
+    if not hasattr(app, "tag_address_entry"):
+        return
+
+    address = app.tag_address_entry.get().strip()
+    if not address or not getattr(app, "tag_address_manual_edit", False):
+        suggest_tag_address(app)
+    else:
+        validate_current_tag_address(app)
+
+
+def suggest_address(brand, data_type, tags):
+    brand = str(brand).strip()
+    data_type = str(data_type).strip().upper()
+    if data_type not in ["BOOL", "INT", "REAL"]:
+        raise ValueError(f"Tipo de dados não suportado: {data_type}")
+
+    if brand == "Siemens":
+        occupied_bytes, occupied_bits = _siemens_occupancy(tags)
+
+        if data_type == "BOOL":
+            byte_index = 0
+            while True:
+                if byte_index not in occupied_bytes:
+                    for bit_index in range(8):
+                        if (byte_index, bit_index) not in occupied_bits:
+                            return f"DBX{byte_index}.{bit_index}"
+                byte_index += 1
+
+        size = 2 if data_type == "INT" else 4
+        prefix = "DBW" if data_type == "INT" else "DBD"
+        candidate = 0
+        while True:
+            byte_range = range(candidate, candidate + size)
+            if (
+                not any(byte in occupied_bytes for byte in byte_range)
+                and not any(byte == bit_byte for byte in byte_range for bit_byte, _ in occupied_bits)
+            ):
+                return f"{prefix}{candidate}"
+            candidate += size
+
+    if brand == "Schneider":
+        occupied_coils, occupied_registers = _schneider_occupancy(tags)
+
+        if data_type == "BOOL":
+            candidate = 0
+            while candidate in occupied_coils:
+                candidate += 1
+            return f"%M{candidate}"
+
+        register_count = 2 if data_type == "REAL" else 1
+        candidate = 0
+        while any(
+            register in occupied_registers
+            for register in range(candidate, candidate + register_count)
+        ):
+            candidate += 1
+        return f"%MW{candidate}"
+
+    raise ValueError(f"Marca PLC não suportada: {brand}")
+
+
+def _siemens_occupancy(tags):
+    occupied_bytes = set()
+    occupied_bits = set()
+
+    for tag in tags:
+        valid, _ = validate_tag_address("Siemens", tag.data_type, tag.address)
+        if not valid:
+            continue
+
+        address = tag.address.strip().upper()
+        if tag.data_type == "BOOL":
+            byte_text, bit_text = address.removeprefix("DBX").split(".")
+            occupied_bits.add((int(byte_text), int(bit_text)))
+        else:
+            prefix = "DBW" if tag.data_type == "INT" else "DBD"
+            byte_index = int(address.removeprefix(prefix))
+            size = 2 if tag.data_type == "INT" else 4
+            occupied_bytes.update(range(byte_index, byte_index + size))
+
+    return occupied_bytes, occupied_bits
+
+
+def _schneider_occupancy(tags):
+    occupied_coils = set()
+    occupied_registers = set()
+
+    for tag in tags:
+        valid, _ = validate_tag_address("Schneider", tag.data_type, tag.address)
+        if not valid:
+            continue
+
+        address = tag.address.strip().upper()
+        if tag.data_type == "BOOL":
+            occupied_coils.add(int(address.removeprefix("%M")))
+        else:
+            register = int(address.removeprefix("%MW"))
+            count = 2 if tag.data_type == "REAL" else 1
+            occupied_registers.update(range(register, register + count))
+
+    return occupied_coils, occupied_registers
+
+
+def parse_csv_bool(value):
+    normalized = str(value).strip().lower()
+    if normalized in TRUE_CSV_VALUES:
+        return True
+    if normalized in FALSE_CSV_VALUES:
+        return False
+    raise ValueError(f"valor booleano inválido: {value}")
+
+
+def read_tags_csv(file_path):
+    tags = []
+
+    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames is None:
+            raise ValueError("CSV sem cabeçalho")
+
+        header_map = {
+            str(header).strip().lower(): header
+            for header in reader.fieldnames
+        }
+        missing_fields = [
+            field for field in TAG_CSV_FIELDS
+            if field not in header_map
+        ]
+        if missing_fields:
+            raise ValueError(
+                "colunas em falta: " + ", ".join(missing_fields)
+            )
+
+        direction_names = {
+            "input": "Input",
+            "feedback": "Feedback",
+            "output": "Output",
+            "internal": "Internal",
+        }
+
+        for line_number, row in enumerate(reader, start=2):
+            if not any(str(value or "").strip() for value in row.values()):
+                continue
+
+            try:
+                values = {
+                    field: str(row.get(header_map[field], "") or "").strip()
+                    for field in TAG_CSV_FIELDS
+                }
+
+                data_type = values["data_type"].upper()
+                if data_type not in ["BOOL", "INT", "REAL"]:
+                    raise ValueError(
+                        f"data_type inválido: {values['data_type']}"
+                    )
+
+                direction = direction_names.get(values["direction"].lower())
+                if direction is None:
+                    raise ValueError(
+                        f"direction inválida: {values['direction']}"
+                    )
+
+                if not values["name"]:
+                    raise ValueError("name vazio")
+
+                tags.append(Tag(
+                    name=values["name"],
+                    data_type=data_type,
+                    direction=direction,
+                    address=values["address"],
+                    enabled_sim=parse_csv_bool(values["enabled_sim"]),
+                    enabled_trend=parse_csv_bool(values["enabled_trend"]),
+                    enabled_alarm=parse_csv_bool(values["enabled_alarm"]),
+                    enabled_dashboard=parse_csv_bool(values["enabled_dashboard"]),
+                ))
+            except ValueError as error:
+                raise ValueError(f"linha {line_number}: {error}") from error
+
+    return tags
+
+
+def write_tags_csv(file_path, tags):
+    with open(file_path, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=TAG_CSV_FIELDS)
+        writer.writeheader()
+
+        for tag in tags:
+            writer.writerow({
+                "name": tag.name,
+                "data_type": tag.data_type,
+                "direction": tag.direction,
+                "address": tag.address,
+                "enabled_sim": "1" if tag.enabled_sim else "0",
+                "enabled_trend": "1" if tag.enabled_trend else "0",
+                "enabled_alarm": "1" if tag.enabled_alarm else "0",
+                "enabled_dashboard": "1" if tag.enabled_dashboard else "0",
+            })
+
+
+def import_tags_csv(app):
+    file_path = filedialog.askopenfilename(
+        initialdir="configs",
+        filetypes=[("CSV files", "*.csv")],
+    )
+    if not file_path:
+        return
+
+    try:
+        imported_tags = read_tags_csv(file_path)
+    except (OSError, ValueError) as error:
+        messagebox.showerror("Erro Import CSV", str(error))
+        return
+
+    previous_tags = app.tags
+    try:
+        app.tags = imported_tags
+        refresh_tag_table(app)
+        app.generate_signals()
+    except Exception as error:
+        app.tags = previous_tags
+        refresh_tag_table(app)
+        app.generate_signals()
+        messagebox.showerror("Erro Import CSV", str(error))
+        return
+
+    app.status_label.configure(
+        text=f"● {len(imported_tags)} TAGS IMPORTADAS",
+        text_color="lime",
+    )
+
+
+def export_tags_csv(app):
+    file_path = filedialog.asksaveasfilename(
+        initialdir="configs",
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv")],
+        initialfile="tags.csv",
+    )
+    if not file_path:
+        return
+
+    try:
+        write_tags_csv(file_path, app.tags)
+    except OSError as error:
+        messagebox.showerror("Erro Export CSV", str(error))
+        return
+
+    app.status_label.configure(
+        text=f"● {len(app.tags)} TAGS EXPORTADAS",
+        text_color="lime",
+    )
 
 
 def refresh_tag_table(app):

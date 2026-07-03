@@ -24,6 +24,7 @@ from ui.tag_manager import (
     get_input_bool_tags,
     get_numeric_tags,
     get_pid_output_tags,
+    update_tag_address_context,
 )
 from ui.feedback_tab import (
     create_feedback_tab,
@@ -222,6 +223,7 @@ class PLCSimulator:
         if hasattr(self, "alarm_source_menu"):
             update_alarm_sources(self)
 
+        update_tag_address_context(self)
         update_dashboard(self, "Sinais gerados")
     
     def update_pid_sources(self):
