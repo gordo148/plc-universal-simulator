@@ -1,5 +1,10 @@
 # Plugin Package
 
+## v2.2 status
+
+Plugin support is architectural scaffolding only. No plugins are bundled,
+discovered, loaded, or activated by the desktop application.
+
 This package is reserved for optional future extensions. The application does
 not discover, import, or activate plugins during startup.
 

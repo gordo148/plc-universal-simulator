@@ -1,4 +1,4 @@
-# Linux Packaging
+# Linux Packaging — v2.2
 
 PLC Universal Simulator is packaged with PyInstaller as a one-folder desktop
 application. One-folder mode keeps startup fast and places the executable and
@@ -58,3 +58,7 @@ documentation, screenshots, Git metadata, or Python cache directories.
 Optional protocol dependencies follow their existing runtime behavior. For
 example, the application still starts when the optional Omron FINS dependency
 is unavailable and reports the missing package only if Omron is selected.
+
+The build does not change application startup or runtime architecture. Driver
+selection, project files, and the dormant plugin loader behave the same as when
+running from source.
