@@ -2,10 +2,18 @@ import json
 from tkinter import filedialog
 from core.tag_model import Tag
 from ui.header import SCHNEIDER_MODELS
-from ui.tag_manager import refresh_tag_table
+from ui.tag_manager import (
+    get_input_analog_tags,
+    get_numeric_tags,
+    get_pid_output_tags,
+    get_tag_by_name,
+    refresh_tag_table,
+)
 
 
 def save_project(app):
+    output_tag = get_tag_by_name(app, app.pid_out_menu.get())
+
     config = {
         "tags": [tag.to_dict() for tag in getattr(app, "tags", [])],
         "brand": app.brand_menu.get(),
@@ -17,8 +25,10 @@ def save_project(app):
 
         "pid": {
             "sp": app.pid_sp_entry.get(),
+            "sp_source": app.pid_sp_source_menu.get(),
             "pv_source": app.pid_pv_menu.get(),
-            "out_address": app.pid_out_entry.get(),
+            "out_source": app.pid_out_menu.get(),
+            "out_address": output_tag.address if output_tag else "",
             "kp": app.pid_kp_entry.get(),
             "ki": app.pid_ki_entry.get(),
             "kd": app.pid_kd_entry.get(),
@@ -191,9 +201,6 @@ def load_project(app):
     app.pid_sp_entry.delete(0, "end")
     app.pid_sp_entry.insert(0, pid.get("sp", "10000"))
 
-    app.pid_out_entry.delete(0, "end")
-    app.pid_out_entry.insert(0, pid.get("out_address", "20"))
-
     app.pid_kp_entry.delete(0, "end")
     app.pid_kp_entry.insert(0, pid.get("kp", "1.0"))
 
@@ -212,16 +219,57 @@ def load_project(app):
     app.pid_interval_entry.delete(0, "end")
     app.pid_interval_entry.insert(0, pid.get("interval_ms", "500"))
 
-    pv_source = pid.get("pv_source", "AI_01")
+    numeric_names = [tag.name for tag in get_numeric_tags(app)]
+    output_tags = get_pid_output_tags(app)
+    output_names = [tag.name for tag in output_tags]
 
-    try:
-        app.pid_pv_menu.set(pv_source)
-    except Exception:
-        pass
+    sp_source = str(pid.get("sp_source", "Manual") or "Manual")
+    app.pid_sp_source_menu.set(
+        sp_source if sp_source in numeric_names else "Manual"
+    )
+
+    pv_source = str(pid.get("pv_source", "") or "")
+    if pv_source.startswith("AI_"):
+        try:
+            legacy_index = int(pv_source.split("_")[1]) - 1
+            pv_source = get_input_analog_tags(app)[legacy_index].name
+        except (IndexError, TypeError, ValueError):
+            pv_source = ""
+    app.pid_pv_menu.set(
+        pv_source if pv_source in numeric_names
+        else (numeric_names[0] if numeric_names else "")
+    )
+
+    out_source = str(pid.get("out_source", "") or "")
+    if out_source not in output_names:
+        legacy_address = _normalize_pid_address(pid.get("out_address", ""))
+        out_source = next(
+            (
+                tag.name for tag in output_tags
+                if _normalize_pid_address(tag.address) == legacy_address
+            ),
+            "",
+        )
+    app.pid_out_menu.set(
+        out_source if out_source in output_names
+        else (output_names[0] if output_names else "")
+    )
 
     reload_alarms(app, config.get("alarms", []))
 
     app.status_label.configure(text="● PROJETO CARREGADO", text_color="lime")
+
+
+def _normalize_pid_address(address):
+    return (
+        str(address)
+        .strip()
+        .upper()
+        .replace("DBW", "")
+        .replace("DBD", "")
+        .replace("%MW", "")
+        .replace("MW", "")
+    )
 
 
 def reload_alarms(app, alarms):

@@ -22,6 +22,8 @@ from ui.tag_manager import (
     create_tag_manager_tab,
     get_input_analog_tags,
     get_input_bool_tags,
+    get_numeric_tags,
+    get_pid_output_tags,
 )
 from ui.feedback_tab import (
     create_feedback_tab,
@@ -223,15 +225,33 @@ class PLCSimulator:
         update_dashboard(self, "Sinais gerados")
     
     def update_pid_sources(self):
-        if not hasattr(self, "pid_pv_menu"):
+        if not hasattr(self, "pid_pv_menu") or not hasattr(self, "pid_out_menu"):
             return
 
-        values = [f"AI_{i + 1:02d}" for i in range(len(self.analog_widgets))]
-        if not values:
-            values = ["AI_01"]
+        numeric_names = [tag.name for tag in get_numeric_tags(self)]
+        output_names = [tag.name for tag in get_pid_output_tags(self)]
 
-        self.pid_pv_menu.configure(values=values)
-        self.pid_pv_menu.set(values[0])
+        current_sp = self.pid_sp_source_menu.get()
+        current_pv = self.pid_pv_menu.get()
+        current_out = self.pid_out_menu.get()
+
+        sp_sources = ["Manual"] + numeric_names
+        self.pid_sp_source_menu.configure(values=sp_sources)
+        self.pid_sp_source_menu.set(
+            current_sp if current_sp in sp_sources else "Manual"
+        )
+
+        self.pid_pv_menu.configure(values=numeric_names)
+        self.pid_pv_menu.set(
+            current_pv if current_pv in numeric_names
+            else (numeric_names[0] if numeric_names else "")
+        )
+
+        self.pid_out_menu.configure(values=output_names)
+        self.pid_out_menu.set(
+            current_out if current_out in output_names
+            else (output_names[0] if output_names else "")
+        )
 
     def update_digital_name(self, index):
         item = self.digital_widgets[index]

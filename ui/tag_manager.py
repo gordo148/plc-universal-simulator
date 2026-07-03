@@ -191,6 +191,9 @@ def set_tag_flag(app, tag, field, value):
 
         update_dashboard(app, "Dashboard atualizado")
 
+    if field != "enabled_sim" and hasattr(app, "update_pid_sources"):
+        app.update_pid_sources()
+
 
 def delete_tag(app, tag):
     if tag in app.tags:
@@ -237,6 +240,27 @@ def get_dashboard_tags(app):
         tag for tag in getattr(app, "tags", [])
         if tag.enabled_dashboard
     ]
+
+
+def get_numeric_tags(app):
+    return [
+        tag for tag in getattr(app, "tags", [])
+        if tag.data_type in ["INT", "REAL"]
+    ]
+
+
+def get_pid_output_tags(app):
+    return [
+        tag for tag in get_numeric_tags(app)
+        if tag.direction in ["Input", "Internal", "Output"]
+    ]
+
+
+def get_tag_by_name(app, name):
+    return next(
+        (tag for tag in getattr(app, "tags", []) if tag.name == name),
+        None,
+    )
 
 
 def get_feedback_tags(app):
