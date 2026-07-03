@@ -37,7 +37,14 @@ datas = [
     for item in collect_data_files("customtkinter")
     if include_data_file(item)
 ]
-hiddenimports = optional_submodules("customtkinter")
+hiddenimports = optional_submodules("customtkinter") + [
+    "drivers.internal_simulator",
+    "drivers.modbus_tcp",
+    "drivers.omron_fins",
+    "drivers.rockwell_enip",
+    "drivers.schneider_modbus",
+    "drivers.siemens_s7",
+]
 
 a = Analysis(
     [os.path.join(project_root, "main.py")],

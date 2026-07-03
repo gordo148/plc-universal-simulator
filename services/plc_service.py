@@ -3,25 +3,43 @@
 import logging
 import re
 import struct
+from importlib import import_module
 from typing import Any, Iterable
-
-from snap7.util import get_bool, get_int, get_real
 
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
-from drivers.schneider_modbus import (
-    MAX_COILS_PER_READ,
-    MAX_REGISTERS_PER_READ,
-    SchneiderModbusDriver,
-)
-from drivers.modbus_tcp import ModbusTCPDriver
-from drivers.internal_simulator import InternalSimulatorDriver
-from drivers.omron_fins import OmronFINSDriver
-from drivers.rockwell_enip import RockwellEtherNetIPDriver
-from drivers.siemens_s7 import SiemensS7Driver
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_COILS_PER_READ = 2000
+MAX_REGISTERS_PER_READ = 125
+
+# These names remain patchable for tests. A class is imported and cached only
+# when its brand is first selected.
+SiemensS7Driver = None
+SchneiderModbusDriver = None
+ModbusTCPDriver = None
+RockwellEtherNetIPDriver = None
+OmronFINSDriver = None
+InternalSimulatorDriver = None
+
+_DRIVER_IMPORTS = {
+    "SiemensS7Driver": "drivers.siemens_s7",
+    "SchneiderModbusDriver": "drivers.schneider_modbus",
+    "ModbusTCPDriver": "drivers.modbus_tcp",
+    "RockwellEtherNetIPDriver": "drivers.rockwell_enip",
+    "OmronFINSDriver": "drivers.omron_fins",
+    "InternalSimulatorDriver": "drivers.internal_simulator",
+}
+
+
+def _driver_class(class_name):
+    driver_class = globals()[class_name]
+    if driver_class is None:
+        module = import_module(_DRIVER_IMPORTS[class_name])
+        driver_class = getattr(module, class_name)
+        globals()[class_name] = driver_class
+    return driver_class
 
 
 class PLCService:
@@ -33,7 +51,13 @@ class PLCService:
         self._driver = driver
         self._brand: str | None = None
         self._simulator_driver = (
-            driver if isinstance(driver, InternalSimulatorDriver) else None
+            driver
+            if (
+                driver is not None
+                and driver.__class__.__module__ == "drivers.internal_simulator"
+                and driver.__class__.__name__ == "InternalSimulatorDriver"
+            )
+            else None
         )
         self.runtime_cache = runtime_cache or RuntimeTagCache()
 
@@ -41,7 +65,7 @@ class PLCService:
         self.disconnect()
 
         if brand == "Siemens":
-            driver = SiemensS7Driver()
+            driver = _driver_class("SiemensS7Driver")()
             connect_args = (
                 ip,
                 int(options.get("rack", 0)),
@@ -49,24 +73,24 @@ class PLCService:
                 int(options.get("db_number", 100)),
             )
         elif brand == "Schneider":
-            driver = SchneiderModbusDriver()
+            driver = _driver_class("SchneiderModbusDriver")()
             connect_args = (
                 ip,
                 int(options.get("port", 502)),
                 int(options.get("slave_id", 1)),
             )
         elif brand == "Modbus TCP":
-            driver = ModbusTCPDriver()
+            driver = _driver_class("ModbusTCPDriver")()
             connect_args = (
                 ip,
                 int(options.get("port", 502)),
                 int(options.get("slave_id", 1)),
             )
         elif brand == "Rockwell":
-            driver = RockwellEtherNetIPDriver()
+            driver = _driver_class("RockwellEtherNetIPDriver")()
             connect_args = (ip,)
         elif brand == "Omron":
-            driver = OmronFINSDriver()
+            driver = _driver_class("OmronFINSDriver")()
             connect_args = (
                 ip,
                 int(options.get("port", 9600)),
@@ -75,7 +99,9 @@ class PLCService:
             )
         elif brand == "Simulator":
             if self._simulator_driver is None:
-                self._simulator_driver = InternalSimulatorDriver()
+                self._simulator_driver = _driver_class(
+                    "InternalSimulatorDriver"
+                )()
             driver = self._simulator_driver
             connect_args = ()
         else:
@@ -262,6 +288,7 @@ class PLCService:
         return _parse_schneider_address(tag)
 
     def _scan_siemens(self, tags: list[TagDefinition]) -> bool:
+        snap7_util = import_module("snap7.util")
         parsed = []
         maximum_end = 0
 
@@ -291,11 +318,11 @@ class PLCService:
         for tag, (byte_index, bit_index) in parsed:
             try:
                 if tag.data_type == "BOOL":
-                    value = get_bool(data, byte_index, bit_index)
+                    value = snap7_util.get_bool(data, byte_index, bit_index)
                 elif tag.data_type == "INT":
-                    value = get_int(data, byte_index)
+                    value = snap7_util.get_int(data, byte_index)
                 elif tag.data_type == "REAL":
-                    value = round(get_real(data, byte_index), 3)
+                    value = round(snap7_util.get_real(data, byte_index), 3)
                 else:
                     raise ValueError("Unsupported tag type")
                 self.runtime_cache.update(

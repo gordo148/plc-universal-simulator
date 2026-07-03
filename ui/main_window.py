@@ -22,7 +22,6 @@ from ui.project_config import (
     save_project_as,
 )
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
-from ui.trend_tab import create_trend_tab, stop_trend, refresh_trend_selectors
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
 from ui.tag_manager import (
     create_tag_manager_tab,
@@ -58,6 +57,7 @@ class PLCSimulator:
         self.analog_widgets = []
         self.analog_profile_running = {}
         self.project_path = None
+        self._trend_initialized = False
 
         self.cyclic_read_enabled = False
 
@@ -79,7 +79,10 @@ class PLCSimulator:
         create_header(self)
 
     def create_tabs(self):
-        self.tabs = ctk.CTkTabview(self.app)
+        self.tabs = ctk.CTkTabview(
+            self.app,
+            command=self._on_tab_changed,
+        )
         self.tabs.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.tab_dashboard = self.tabs.add("Dashboard")
@@ -102,8 +105,25 @@ class PLCSimulator:
         self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.create_pid_tab()
-        create_trend_tab(self)
         create_alarm_tab(self)
+
+    def _on_tab_changed(self):
+        if self.tabs.get() == "Trends":
+            self.ensure_trend_tab()
+
+    def ensure_trend_tab(self):
+        if self._trend_initialized:
+            return
+        from ui.trend_tab import create_trend_tab
+
+        create_trend_tab(self)
+        self._trend_initialized = True
+        pending = getattr(self, "_pending_trend_settings", None)
+        if pending is not None:
+            del self._pending_trend_settings
+            from ui.project_config import _restore_trends
+
+            _restore_trends(self, pending)
 
     def create_pid_tab(self):
         create_pid_tab(self)
@@ -175,6 +195,8 @@ class PLCSimulator:
         self.cyclic_read_enabled = False
 
         if hasattr(self, "trend_running"):
+            from ui.trend_tab import stop_trend
+
             stop_trend(self)
 
         self.stop_pid()
@@ -261,6 +283,8 @@ class PLCSimulator:
         self.update_pid_sources()
 
         if hasattr(self, "trend_selector_frame"):
+            from ui.trend_tab import refresh_trend_selectors
+
             refresh_trend_selectors(self)
 
         if hasattr(self, "alarm_source_menu"):
@@ -506,6 +530,8 @@ class PLCSimulator:
             return
 
         if hasattr(self, "trend_running"):
+            from ui.trend_tab import stop_trend
+
             stop_trend(self)
 
         self.stop_pid()

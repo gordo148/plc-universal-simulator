@@ -165,6 +165,10 @@ def build_project_data(app):
         for name, variable in getattr(app, "trend_tag_vars", {}).items()
         if variable.get()
     ]
+    trend_auto_scale = getattr(app, "trend_auto_scale", None)
+    pending_trends = getattr(app, "_pending_trend_settings", {})
+    if not selected_curves and not hasattr(app, "trend_tag_vars"):
+        selected_curves = list(pending_trends.get("selected_curves", []))
 
     return {
         "format": PROJECT_FORMAT,
@@ -197,7 +201,11 @@ def build_project_data(app):
                 if tag.enabled_trend
             ],
             "selected_curves": selected_curves,
-            "auto_scale": bool(app.trend_auto_scale.get()),
+            "auto_scale": (
+                bool(trend_auto_scale.get())
+                if trend_auto_scale is not None
+                else bool(pending_trends.get("auto_scale", True))
+            ),
         },
         "dashboard": {
             "enabled_tags": [
@@ -455,6 +463,12 @@ def _restore_pid(app, pid):
 
 
 def _restore_trends(app, trends):
+    if (
+        hasattr(app, "ensure_trend_tab")
+        and not getattr(app, "_trend_initialized", False)
+    ):
+        app._pending_trend_settings = copy.deepcopy(trends)
+        return
     from ui.trend_tab import clear_trend, refresh_trend_selectors, stop_trend
 
     stop_trend(app)
