@@ -125,7 +125,9 @@ class PLCSimulator:
         brand = self.brand_menu.get()
 
         try:
-            if brand == "Siemens":
+            if brand == "Simulator":
+                result = self.plc_service.connect(brand, "")
+            elif brand == "Siemens":
                 result = self.plc_service.connect(
                     brand,
                     ip,
@@ -152,10 +154,16 @@ class PLCSimulator:
                 result = self.plc_service.connect(brand, ip)
 
             if result:
-                self.status_label.configure(text="● LIGADO", text_color="lime")
+                status = "● SIMULATOR" if brand == "Simulator" else "● LIGADO"
+                self.status_label.configure(text=status, text_color="lime")
                 self.cyclic_read_enabled = True
                 self.start_cyclic_read()
-                update_dashboard(self, "PLC ligado")
+                event = (
+                    "Simulador interno ligado"
+                    if brand == "Simulator"
+                    else "PLC ligado"
+                )
+                update_dashboard(self, event)
             else:
                 self.status_label.configure(text="● ERRO LIGAÇÃO", text_color="orange")
 
@@ -197,8 +205,10 @@ class PLCSimulator:
             self.create_modbus_options()
         elif value == "Rockwell":
             self.create_rockwell_options()
-        else:
+        elif value == "Omron":
             self.create_omron_options()
+        else:
+            self.create_simulator_options()
 
         update_tag_address_context(self)
         self.generate_signals()

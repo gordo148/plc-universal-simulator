@@ -25,6 +25,7 @@ SUPPORTED_BRANDS = (
     "Modbus TCP",
     "Rockwell",
     "Omron",
+    "Simulator",
 )
 
 
@@ -102,7 +103,7 @@ def build_project_data(app):
 
     connection = {
         "brand": brand,
-        "ip": app.ip_entry.get(),
+        "ip": "" if brand == "Simulator" else app.ip_entry.get(),
         "settings": {},
     }
     if brand == "Siemens":
@@ -279,8 +280,10 @@ def _apply_project_data(app, project, show_error=True):
             app.create_modbus_options()
         elif brand == "Rockwell":
             app.create_rockwell_options()
-        else:
+        elif brand == "Omron":
             app.create_omron_options()
+        else:
+            app.create_simulator_options()
 
         update_tag_address_context(app)
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
@@ -335,6 +338,9 @@ def _restore_connection_settings(app, brand, settings):
         return
 
     if brand == "Rockwell":
+        return
+
+    if brand == "Simulator":
         return
 
     if brand == "Omron":
@@ -513,7 +519,7 @@ def _stage_project_data(project):
         if not isinstance(tag.address, str) or not tag.address.strip():
             raise ValueError(f"Tag {index}: endereço vazio")
         tag.address = tag.address.strip()
-        if brand != "Rockwell":
+        if brand not in ("Rockwell", "Simulator"):
             tag.address = tag.address.upper()
         tags.append(tag)
 

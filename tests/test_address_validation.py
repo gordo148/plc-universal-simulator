@@ -164,3 +164,19 @@ def test_omron_suggestions_skip_occupied_bits_and_real_words():
     assert suggest_address("Omron", "BOOL", tags) == "CIO0.01"
     assert suggest_address("Omron", "INT", tags) == "D3"
     assert suggest_address("Omron", "REAL", tags) == "D3"
+
+
+@pytest.mark.parametrize("data_type", ["BOOL", "INT", "REAL"])
+@pytest.mark.parametrize("address", ["Motor_Run", "internal/1", "Value 2"])
+def test_simulator_accepts_nonempty_internal_addresses(data_type, address):
+    assert validate_tag_address("Simulator", data_type, address)[0]
+
+
+def test_simulator_rejects_empty_address_and_suggests_tag_name():
+    assert not validate_tag_address("Simulator", "BOOL", "   ")[0]
+    assert suggest_address(
+        "Simulator",
+        "BOOL",
+        [],
+        "Motor_Run",
+    ) == "Motor_Run"

@@ -58,13 +58,21 @@ def create_header(app):
     ctk.CTkLabel(app.header, text="Marca").grid(row=0, column=0, padx=5)
     app.brand_menu = ctk.CTkOptionMenu(
         app.header,
-        values=["Siemens", "Schneider", "Modbus TCP", "Rockwell", "Omron"],
+        values=[
+            "Siemens",
+            "Schneider",
+            "Modbus TCP",
+            "Rockwell",
+            "Omron",
+            "Simulator",
+        ],
         command=app.update_brand
     )
     app.brand_menu.set("Siemens")
     app.brand_menu.grid(row=0, column=1, padx=5)
 
-    ctk.CTkLabel(app.header, text="IP").grid(row=0, column=2, padx=5)
+    app.ip_label = ctk.CTkLabel(app.header, text="IP")
+    app.ip_label.grid(row=0, column=2, padx=5)
     app.ip_entry = ctk.CTkEntry(app.header, width=140)
     app.ip_entry.insert(0, "192.168.1.10")
     app.ip_entry.grid(row=0, column=3, padx=5)
@@ -104,6 +112,7 @@ def create_header(app):
     app.create_modbus_options = lambda: create_modbus_options(app)
     app.create_rockwell_options = lambda: create_rockwell_options(app)
     app.create_omron_options = lambda: create_omron_options(app)
+    app.create_simulator_options = lambda: create_simulator_options(app)
     app.create_siemens_options()
     update_top_status_bar(app)
     app.app.after(
@@ -154,11 +163,19 @@ def update_top_status_bar(app):
     )
     app.top_project.configure(text=project_name)
     app.top_brand.configure(text=app.brand_menu.get())
-    app.top_ip.configure(text=app.ip_entry.get() or "—")
+    if app.brand_menu.get() == "Simulator":
+        app.top_ip.configure(text="INTERNAL")
+    else:
+        app.top_ip.configure(text=app.ip_entry.get() or "—")
 
     connected = app.plc_service.is_connected()
+    simulator_online = connected and app.brand_menu.get() == "Simulator"
     app.top_mode.configure(
-        text="● ONLINE" if connected else "● OFFLINE",
+        text=(
+            "● ONLINE SIM"
+            if simulator_online
+            else "● ONLINE" if connected else "● OFFLINE"
+        ),
         text_color=COLOR_ONLINE if connected else COLOR_OFFLINE,
     )
 
@@ -216,8 +233,18 @@ def hide_alarm_banner(app):
 
 
 def clear_brand_frame(app):
+    _set_ip_visibility(app, True)
     for widget in app.brand_frame.winfo_children():
         widget.destroy()
+
+
+def _set_ip_visibility(app, visible):
+    if visible:
+        app.ip_label.grid()
+        app.ip_entry.grid()
+    else:
+        app.ip_label.grid_remove()
+        app.ip_entry.grid_remove()
 
 
 def create_siemens_options(app):
@@ -343,3 +370,13 @@ def create_omron_options(app):
         text="Omron FINS/UDP — CIO bits / DM words",
         text_color="gray",
     ).grid(row=0, column=6, padx=20)
+
+
+def create_simulator_options(app):
+    clear_brand_frame(app)
+    _set_ip_visibility(app, False)
+    ctk.CTkLabel(
+        app.brand_frame,
+        text="Internal PLC Simulator — no network required",
+        text_color="gray",
+    ).grid(row=0, column=0, padx=20)

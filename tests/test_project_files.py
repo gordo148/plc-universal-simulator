@@ -90,3 +90,25 @@ def test_omron_project_preserves_fins_connection_settings(project_app):
         "destination_node": "10",
         "source_node": "20",
     }
+
+
+def test_simulator_project_has_no_network_or_runtime_values(project_app):
+    project_app.brand_menu.value = "Simulator"
+    project_app.tags[0].address = "Motor_Run"
+    project_app.tags[1].address = "Tank_Level"
+    project_app.tag_runtime_values = {"Motor_Run": True, "Tank_Level": 42.5}
+
+    project = project_config.build_project_data(project_app)
+    staged = project_config._stage_project_data(project)
+
+    assert staged["plc"] == {
+        "brand": "Simulator",
+        "ip": "",
+        "settings": {},
+    }
+    assert "runtime_values" not in staged
+    assert "tag_runtime_values" not in staged
+    assert [tag["address"] for tag in staged["tags"]] == [
+        "Motor_Run",
+        "Tank_Level",
+    ]

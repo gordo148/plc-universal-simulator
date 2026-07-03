@@ -302,6 +302,14 @@ def validate_tag_address(brand, data_type, address):
                 "REAL Omron requer palavra DM e ocupa 2 palavras",
             ),
         }
+    elif brand == "Simulator":
+        patterns = {
+            data_type: (
+                r".+",
+                "Simulator requer apenas um endereço interno não vazio",
+            )
+            for data_type in ("BOOL", "INT", "REAL")
+        }
     else:
         return False, f"Marca PLC não suportada: {brand}"
 
@@ -345,6 +353,8 @@ def resolve_tag_address(brand, tag_name, entered_address):
     """Resolve the stored PLC address without changing non-Rockwell rules."""
     if str(brand).strip() == "Rockwell":
         return str(tag_name).strip()
+    if str(brand).strip() == "Simulator":
+        return str(entered_address).strip()
     return str(entered_address).strip().upper()
 
 
@@ -491,6 +501,10 @@ def suggest_address(brand, data_type, tags, tag_name=None):
             candidate += 1
         return f"D{candidate}"
 
+    if brand == "Simulator":
+        suggestion = str(tag_name or "").strip()
+        return suggestion or f"SIM_{data_type}"
+
     raise ValueError(f"Marca PLC não suportada: {brand}")
 
 
@@ -623,7 +637,7 @@ def read_tags_csv(file_path, brand=None):
                     raise ValueError("name vazio")
 
                 address = values["address"]
-                if brand != "Rockwell":
+                if brand not in ("Rockwell", "Simulator"):
                     address = address.upper()
                 if brand is not None:
                     valid, validation_message = validate_tag_address(

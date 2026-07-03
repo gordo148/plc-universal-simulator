@@ -15,6 +15,7 @@ from drivers.schneider_modbus import (
     SchneiderModbusDriver,
 )
 from drivers.modbus_tcp import ModbusTCPDriver
+from drivers.internal_simulator import InternalSimulatorDriver
 from drivers.omron_fins import OmronFINSDriver
 from drivers.rockwell_enip import RockwellEtherNetIPDriver
 from drivers.siemens_s7 import SiemensS7Driver
@@ -31,6 +32,9 @@ class PLCService:
     ) -> None:
         self._driver = driver
         self._brand: str | None = None
+        self._simulator_driver = (
+            driver if isinstance(driver, InternalSimulatorDriver) else None
+        )
         self.runtime_cache = runtime_cache or RuntimeTagCache()
 
     def connect(self, brand: str, ip: str, **options) -> bool:
@@ -69,6 +73,11 @@ class PLCService:
                 int(options.get("destination_node", 0)),
                 int(options.get("source_node", 1)),
             )
+        elif brand == "Simulator":
+            if self._simulator_driver is None:
+                self._simulator_driver = InternalSimulatorDriver()
+            driver = self._simulator_driver
+            connect_args = ()
         else:
             raise ValueError(f"Unsupported PLC brand: {brand}")
 
@@ -138,6 +147,8 @@ class PLCService:
             return self._scan_rockwell(tags)
         if active_brand == "Omron":
             return self._scan_omron(tags)
+        if active_brand == "Simulator":
+            return self._scan_simulator(tags)
         return False
 
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
@@ -154,6 +165,8 @@ class PLCService:
             elif self._brand == "Omron":
                 address = _parse_omron_address(tag)
                 result = self._driver.write_bool(address, bool(value))
+            elif self._brand == "Simulator":
+                result = self._driver.write(tag.address, bool(value), "BOOL")
             else:
                 address = self._parse_modbus_address(tag)
                 result = self._driver.write_digital(address, bool(value))
@@ -206,6 +219,14 @@ class PLCService:
                     result = self._driver.write_real(address, float(value))
                 else:
                     raise ValueError("Omron numeric writes require INT or REAL")
+            elif self._brand == "Simulator":
+                if not isinstance(target, TagDefinition):
+                    raise ValueError("Simulator writes require a tag definition")
+                result = self._driver.write(
+                    target.address,
+                    value,
+                    data_type,
+                )
             else:
                 address = self._numeric_address(target)
                 result = self._driver.write_analog(address, value, data_type)
@@ -388,6 +409,25 @@ class PLCService:
                 )
             except Exception:
                 LOGGER.exception("Omron FINS read failed for tag %s", tag.name)
+                self.runtime_cache.invalidate(tag.name)
+                success = False
+        return success
+
+    def _scan_simulator(self, tags: list[TagDefinition]) -> bool:
+        success = True
+        for tag in tags:
+            try:
+                value = self._driver.read(tag.address, tag.data_type)
+                if value is None:
+                    self.runtime_cache.invalidate(tag.name)
+                    success = False
+                    continue
+                self.runtime_cache.update(
+                    tag.name,
+                    value,
+                    RuntimeValueSource.PLC,
+                )
+            except (TypeError, ValueError):
                 self.runtime_cache.invalidate(tag.name)
                 success = False
         return success
