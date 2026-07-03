@@ -97,6 +97,28 @@ def create_header(app):
     app.brand_frame = ctk.CTkFrame(app.header)
     app.brand_frame.grid(row=1, column=0, columnspan=13, sticky="ew", padx=5, pady=10)
 
+    app.utility_frame = ctk.CTkFrame(app.header, fg_color="transparent")
+    app.utility_frame.grid(row=2, column=0, columnspan=13, sticky="ew", padx=5, pady=(0, 8))
+    ctk.CTkLabel(app.utility_frame, text="Projetos recentes").pack(side="left", padx=5)
+    app.recent_project_menu = ctk.CTkOptionMenu(
+        app.utility_frame,
+        values=["Nenhum projeto recente"],
+        width=380,
+    )
+    app.recent_project_menu.pack(side="left", padx=5)
+    ctk.CTkButton(
+        app.utility_frame,
+        text="Abrir recente",
+        command=app.open_recent_project,
+        width=100,
+    ).pack(side="left", padx=4)
+    ctk.CTkButton(
+        app.utility_frame,
+        text="About",
+        command=app.show_about,
+        width=70,
+    ).pack(side="right", padx=4)
+
     app.alarm_banner = ctk.CTkLabel(
         app.app,
         text="",

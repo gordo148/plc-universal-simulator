@@ -6,6 +6,7 @@ from tkinter import messagebox
 
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 from services.plc_service import PLCService
+from services.settings_service import ApplicationSettings
 
 from ui.header import create_header, SCHNEIDER_MODELS
 from ui.digital_tab import create_digital_row
@@ -16,8 +17,10 @@ from ui.pid_logic import stop_pid as pid_stop
 from ui.pid_logic import run_pid_loop as pid_run_loop
 from ui.pid_logic import write_pid_output as pid_write_output
 from ui.project_config import (
+    build_project_data,
     new_project,
     open_project,
+    open_project_path,
     save_project,
     save_project_as,
 )
@@ -43,11 +46,15 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 LOGGER = logging.getLogger(__name__)
+APP_VERSION = "2.2"
+NO_RECENT_PROJECTS = "Nenhum projeto recente"
 
 
 class PLCSimulator:
     def __init__(self):
         os.makedirs("configs", exist_ok=True)
+
+        self.settings = ApplicationSettings.load()
 
         self.tag_runtime = RuntimeTagCache()
         self.plc_service = PLCService(runtime_cache=self.tag_runtime)
@@ -68,12 +75,18 @@ class PLCSimulator:
 
         self.app = ctk.CTk()
         self.app.title("PLC Simulator Universal — Novo Projeto")
-        self.app.geometry("1500x850")
+        self.app.geometry(self.settings.window_size)
         self.app.minsize(1200, 750)
+        self.app.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.create_header()
         self.create_tabs()
-        self.generate_signals()
+        self.ip_entry.delete(0, "end")
+        self.ip_entry.insert(0, self.settings.ip_address)
+        self.brand_menu.set(self.settings.plc_brand)
+        self.update_brand(self.settings.plc_brand)
+        self.refresh_recent_projects()
+        self._mark_project_saved()
 
     def create_header(self):
         create_header(self)
@@ -546,16 +559,88 @@ class PLCSimulator:
         update_dashboard(self, "Reset executado")
 
     def save_project(self):
-        return save_project(self)
+        result = save_project(self)
+        if result:
+            self._after_project_saved()
+        return result
 
     def save_project_as(self):
-        return save_project_as(self)
+        result = save_project_as(self)
+        if result:
+            self._after_project_saved()
+        return result
 
     def new_project(self):
-        return new_project(self)
+        result = new_project(self)
+        if result:
+            self._mark_project_saved()
+        return result
 
     def open_project(self):
-        return open_project(self)
+        result = open_project(self)
+        if result:
+            self._after_project_opened()
+        return result
+
+    def open_recent_project(self):
+        path = self.recent_project_menu.get()
+        if not path or path == NO_RECENT_PROJECTS:
+            return False
+        result = open_project_path(self, path)
+        if result:
+            self._after_project_opened()
+        return result
+
+    def _after_project_opened(self):
+        self.settings.add_recent_project(self.project_path)
+        self._save_settings()
+        self.refresh_recent_projects()
+        self._mark_project_saved()
+
+    def _after_project_saved(self):
+        # Saved projects belong in the same quick-access list as opened ones.
+        if self.project_path:
+            self.settings.add_recent_project(self.project_path)
+            self._save_settings()
+            self.refresh_recent_projects()
+        self._mark_project_saved()
+
+    def refresh_recent_projects(self):
+        if not hasattr(self, "recent_project_menu"):
+            return
+        values = self.settings.recent_projects or [NO_RECENT_PROJECTS]
+        self.recent_project_menu.configure(values=values)
+        self.recent_project_menu.set(values[0])
+
+    def _mark_project_saved(self):
+        self._saved_project_snapshot = build_project_data(self)
+
+    def has_unsaved_changes(self):
+        saved = getattr(self, "_saved_project_snapshot", None)
+        return saved is not None and build_project_data(self) != saved
+
+    def _save_settings(self):
+        self.settings.plc_brand = self.brand_menu.get()
+        self.settings.ip_address = self.ip_entry.get()
+        size = self.app.geometry().split("+", 1)[0]
+        if "x" in size:
+            self.settings.window_size = size
+        try:
+            self.settings.save()
+        except OSError as error:
+            LOGGER.warning("Could not save application settings: %s", error)
+
+    def on_close(self):
+        if self.has_unsaved_changes() and not messagebox.askyesno(
+            "Alterações não guardadas",
+            "O projeto tem alterações não guardadas. Fechar sem guardar?",
+        ):
+            return
+        self._save_settings()
+        self.app.destroy()
+
+    def show_about(self):
+        messagebox.showinfo("About", f"PLC Universal Simulator v{APP_VERSION}")
 
     def run(self):
         self.app.mainloop()

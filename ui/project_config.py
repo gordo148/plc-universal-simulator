@@ -70,6 +70,12 @@ def open_project(app):
     if not file_path:
         return False
 
+    return open_project_path(app, file_path)
+
+
+def open_project_path(app, file_path):
+    """Open a project from a known path, including a recent-project entry."""
+
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             project = json.load(file)
