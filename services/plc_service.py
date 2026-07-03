@@ -1,5 +1,6 @@
 """Centralized PLC polling and runtime tag decoding."""
 
+import logging
 import struct
 from typing import Any, Iterable
 
@@ -7,8 +8,15 @@ from snap7.util import get_bool, get_int, get_real
 
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
-from drivers.schneider_modbus import SchneiderModbusDriver
+from drivers.schneider_modbus import (
+    MAX_COILS_PER_READ,
+    MAX_REGISTERS_PER_READ,
+    SchneiderModbusDriver,
+)
 from drivers.siemens_s7 import SiemensS7Driver
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PLCService:
@@ -48,14 +56,14 @@ class PLCService:
             try:
                 driver.disconnect()
             except Exception:
-                pass
+                LOGGER.exception("PLC cleanup failed after connection error")
             raise
 
         if not connected:
             try:
                 driver.disconnect()
             except Exception:
-                pass
+                LOGGER.exception("PLC cleanup failed after rejected connection")
             return False
 
         self._driver = driver
@@ -72,7 +80,7 @@ class PLCService:
             try:
                 driver.disconnect()
             except Exception:
-                pass
+                LOGGER.exception("PLC disconnect failed")
 
     def is_connected(self) -> bool:
         if self._driver is None:
@@ -82,6 +90,7 @@ class PLCService:
         try:
             return bool(is_connected()) if callable(is_connected) else False
         except Exception:
+            LOGGER.exception("PLC connection-state check failed")
             return False
 
     def read(
@@ -103,10 +112,6 @@ class PLCService:
             return self._scan_schneider(tags)
         return False
 
-    def scan(self, definitions: Iterable[TagDefinition], brand: str | None = None) -> bool:
-        """Compatibility alias for the previous polling API."""
-        return self.read(definitions, brand)
-
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
         if not self.is_connected() or self._brand is None:
             return None
@@ -119,6 +124,7 @@ class PLCService:
                 address = _parse_schneider_address(tag)
                 result = self._driver.write_digital(address, bool(value))
         except Exception:
+            LOGGER.exception("PLC digital write failed for tag %s", tag.name)
             return None
 
         if result is not None:
@@ -147,6 +153,7 @@ class PLCService:
             )
             result = self._driver.write_analog(address, value, data_type)
         except Exception:
+            LOGGER.exception("PLC numeric write failed for target %s", target)
             return None
 
         if result is not None and isinstance(target, TagDefinition):
@@ -189,6 +196,7 @@ class PLCService:
         try:
             data = self._driver.read_data(maximum_end)
         except Exception:
+            LOGGER.exception("Siemens polling read failed")
             for tag, _ in parsed:
                 self.runtime_cache.invalidate(tag.name)
             return False
@@ -241,70 +249,114 @@ class PLCService:
         return success
 
     def _read_schneider_coils(self, tags) -> bool:
-        start = min(address for _, address in tags)
-        end = max(address for _, address in tags)
-        try:
-            values = self._driver.read_coils_block(start, end - start + 1)
-        except Exception:
-            for tag, _ in tags:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-
-        if values is None:
-            for tag, _ in tags:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-
-        for tag, address in tags:
-            offset = address - start
-            if offset < len(values):
-                self.runtime_cache.update(
-                    tag.name,
-                    bool(values[offset]),
-                    RuntimeValueSource.PLC,
+        success = True
+        for block in _contiguous_blocks(
+            tags,
+            lambda _tag: 1,
+            MAX_COILS_PER_READ,
+        ):
+            start = block[0][1]
+            end = max(address + 1 for _, address in block)
+            try:
+                values = self._driver.read_coils_block(start, end - start)
+            except Exception:
+                LOGGER.exception(
+                    "Schneider coil read failed at %s count %s",
+                    start,
+                    end - start,
                 )
-            else:
-                self.runtime_cache.invalidate(tag.name)
-        return True
+                values = None
+
+            if values is None:
+                success = False
+                for tag, _ in block:
+                    self.runtime_cache.invalidate(tag.name)
+                continue
+
+            for tag, address in block:
+                offset = address - start
+                if offset < len(values):
+                    self.runtime_cache.update(
+                        tag.name,
+                        bool(values[offset]),
+                        RuntimeValueSource.PLC,
+                    )
+                else:
+                    success = False
+                    self.runtime_cache.invalidate(tag.name)
+        return success
 
     def _read_schneider_registers(self, tags) -> bool:
-        start = min(address for _, address in tags)
-        end = max(
-            address + (2 if tag.data_type == "REAL" else 1)
-            for tag, address in tags
-        )
-        try:
-            values = self._driver.read_registers_block(start, end - start)
-        except Exception:
-            for tag, _ in tags:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-
-        if values is None:
-            for tag, _ in tags:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-
-        for tag, address in tags:
-            offset = address - start
+        success = True
+        size = lambda tag: 2 if tag.data_type == "REAL" else 1
+        for block in _contiguous_blocks(
+            tags,
+            size,
+            MAX_REGISTERS_PER_READ,
+        ):
+            start = block[0][1]
+            end = max(address + size(tag) for tag, address in block)
             try:
-                if tag.data_type == "INT":
-                    value = values[offset]
-                else:
-                    raw = struct.pack(
-                        ">HH",
-                        values[offset] & 0xFFFF,
-                        values[offset + 1] & 0xFFFF,
-                    )
-                    value = round(struct.unpack(">f", raw)[0], 3)
-                self.runtime_cache.update(
-                    tag.name,
-                    value,
-                    RuntimeValueSource.PLC,
+                values = self._driver.read_registers_block(start, end - start)
+            except Exception:
+                LOGGER.exception(
+                    "Schneider register read failed at %s count %s",
+                    start,
+                    end - start,
                 )
-            except (IndexError, struct.error):
-                self.runtime_cache.invalidate(tag.name)
-        return True
+                values = None
+
+            if values is None:
+                success = False
+                for tag, _ in block:
+                    self.runtime_cache.invalidate(tag.name)
+                continue
+
+            for tag, address in block:
+                offset = address - start
+                try:
+                    if tag.data_type == "INT":
+                        value = values[offset]
+                    else:
+                        raw = struct.pack(
+                            ">HH",
+                            values[offset] & 0xFFFF,
+                            values[offset + 1] & 0xFFFF,
+                        )
+                        value = round(struct.unpack(">f", raw)[0], 3)
+                    self.runtime_cache.update(
+                        tag.name,
+                        value,
+                        RuntimeValueSource.PLC,
+                    )
+                except (IndexError, struct.error):
+                    success = False
+                    self.runtime_cache.invalidate(tag.name)
+        return success
+
+
+def _contiguous_blocks(tags, size_for_tag, maximum_count):
+    """Group requested addresses without filling sparse gaps."""
+    blocks = []
+    current = []
+    current_end = None
+
+    for tag, address in sorted(tags, key=lambda item: item[1]):
+        tag_end = address + size_for_tag(tag)
+        if (
+            current
+            and (address > current_end or tag_end - current[0][1] > maximum_count)
+        ):
+            blocks.append(current)
+            current = []
+            current_end = None
+
+        current.append((tag, address))
+        current_end = tag_end if current_end is None else max(current_end, tag_end)
+
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def _data_size(data_type: str) -> int:

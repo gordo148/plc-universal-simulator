@@ -1,4 +1,5 @@
 import os
+import logging
 import time
 import customtkinter as ctk
 from tkinter import messagebox
@@ -21,7 +22,7 @@ from ui.project_config import (
     save_project_as,
 )
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
-from ui.trend_tab import create_trend_tab, stop_trend, create_ai_checkboxes
+from ui.trend_tab import create_trend_tab, stop_trend, refresh_trend_selectors
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
 from ui.tag_manager import (
     create_tag_manager_tab,
@@ -42,6 +43,8 @@ from ui.feedback_tab import (
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+LOGGER = logging.getLogger(__name__)
+
 
 class PLCSimulator:
     def __init__(self):
@@ -51,6 +54,7 @@ class PLCSimulator:
         self.plc_service = PLCService(runtime_cache=self.tag_runtime)
         self.digital_states = {}
         self.digital_widgets = []
+        self.pending_pulse_callbacks = {}
         self.analog_widgets = []
         self.analog_profile_running = {}
         self.project_path = None
@@ -150,21 +154,17 @@ class PLCSimulator:
             messagebox.showerror("Erro de ligação", str(e))
 
     def disconnect(self):
-        try:
-            self.cyclic_read_enabled = False
+        self.cyclic_read_enabled = False
 
-            if hasattr(self, "trend_running"):
-                stop_trend(self)
+        if hasattr(self, "trend_running"):
+            stop_trend(self)
 
-            self.stop_pid()
+        self.stop_pid()
 
-            self.plc_service.disconnect()
+        self.plc_service.disconnect()
 
-            self.status_label.configure(text="● DESLIGADO", text_color="red")
-            update_dashboard(self, "PLC desligado")
-
-        except Exception:
-            pass
+        self.status_label.configure(text="● DESLIGADO", text_color="red")
+        update_dashboard(self, "PLC desligado")
 
     def is_connected(self):
         if not self.plc_service.is_connected():
@@ -199,6 +199,10 @@ class PLCSimulator:
         self.generate_signals()
 
     def clear_signal_frames(self):
+        for callback_id in self.pending_pulse_callbacks.values():
+            self.app.after_cancel(callback_id)
+        self.pending_pulse_callbacks.clear()
+
         for widget in self.digital_scroll.winfo_children():
             widget.destroy()
 
@@ -230,7 +234,7 @@ class PLCSimulator:
         self.update_pid_sources()
 
         if hasattr(self, "trend_selector_frame"):
-            create_ai_checkboxes(self)
+            refresh_trend_selectors(self)
 
         if hasattr(self, "alarm_source_menu"):
             update_alarm_sources(self)
@@ -293,6 +297,7 @@ class PLCSimulator:
 
     def pulse_digital(self, index):
         item = self.digital_widgets[index]
+        tag = item["tag"]
 
         try:
             pulse_ms = int(item["pulse_entry"].get())
@@ -304,10 +309,23 @@ class PLCSimulator:
 
         self.write_digital_state(index, True)
 
-        self.app.after(
+        tag_identity = id(tag)
+        previous_callback = self.pending_pulse_callbacks.pop(tag_identity, None)
+        if previous_callback is not None:
+            self.app.after_cancel(previous_callback)
+
+        callback_id = self.app.after(
             pulse_ms,
-            lambda idx=index: self.write_digital_state(idx, False)
+            lambda: self._finish_digital_pulse(tag)
         )
+        self.pending_pulse_callbacks[tag_identity] = callback_id
+
+    def _finish_digital_pulse(self, tag):
+        self.pending_pulse_callbacks.pop(id(tag), None)
+        for index, item in enumerate(self.digital_widgets):
+            if item["tag"] is tag:
+                self.write_digital_state(index, False)
+                return
 
     def toggle_digital(self, index):
         item = self.digital_widgets[index]
@@ -420,7 +438,7 @@ class PLCSimulator:
 
         except Exception as e:
             self.status_label.configure(text="● ERRO LEITURA", text_color="orange")
-            print(e)
+            LOGGER.exception("Cyclic PLC read failed")
 
         self.app.after(500, self.start_cyclic_read)
 
@@ -484,9 +502,6 @@ class PLCSimulator:
         return new_project(self)
 
     def open_project(self):
-        return open_project(self)
-
-    def load_project(self):
         return open_project(self)
 
     def run(self):

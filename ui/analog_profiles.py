@@ -51,39 +51,35 @@ def run_profile(app, index):
         item["profile_status"].configure(text="ERRO", text_color="orange")
         return
 
-    try:
-        current_value = int(
-            app.tag_runtime.get_value(item["tag"].name, 0)
-        )
+    current_value = int(
+        app.tag_runtime.get_value(item["tag"].name, 0)
+    )
 
-        if mode == "Ramp":
-            direction = item["direction"]
-            next_value = current_value + step * direction
+    if mode == "Ramp":
+        direction = item["direction"]
+        next_value = current_value + step * direction
 
-            if next_value >= max_value:
-                next_value = max_value
-                item["direction"] = -1
+        if next_value >= max_value:
+            next_value = max_value
+            item["direction"] = -1
 
-            if next_value <= min_value:
-                next_value = min_value
-                item["direction"] = 1
+        if next_value <= min_value:
+            next_value = min_value
+            item["direction"] = 1
 
-        elif mode == "Random":
-            next_value = random.randint(min_value, max_value)
+    elif mode == "Random":
+        next_value = random.randint(min_value, max_value)
 
-        elif mode == "Step":
-            if current_value <= min_value:
-                next_value = max_value
-            else:
-                next_value = min_value
-
+    elif mode == "Step":
+        if current_value <= min_value:
+            next_value = max_value
         else:
-            return
+            next_value = min_value
 
-        result = app.write_analog_by_index(index, next_value)
+    else:
+        return
 
-    except Exception:
-        result = None
+    result = app.write_analog_by_index(index, next_value)
 
     if result is None:
         stop_profile(app, index)

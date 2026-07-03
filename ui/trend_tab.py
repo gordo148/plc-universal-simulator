@@ -1,4 +1,5 @@
 import csv
+import math
 import time
 import customtkinter as ctk
 from tkinter import filedialog
@@ -56,7 +57,7 @@ def create_trend_tab(app):
 
     app.trend_selector_frame = ctk.CTkFrame(frame)
     app.trend_selector_frame.pack(fill="x", padx=10, pady=5)
-    create_ai_checkboxes(app)
+    refresh_trend_selectors(app)
 
     app.trend_fig = Figure(figsize=(10, 5), dpi=100)
     app.trend_ax = app.trend_fig.add_subplot(111)
@@ -69,11 +70,8 @@ def create_trend_tab(app):
     app.trend_canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
 
-def create_ai_checkboxes(app):
-    """Refresh curve selectors from trend-enabled tags.
-
-    The historical function name is retained for callers outside this module.
-    """
+def refresh_trend_selectors(app):
+    """Refresh curve selectors from trend-enabled tags."""
     previous_selection = {
         name: variable.get()
         for name, variable in app.trend_tag_vars.items()
@@ -107,7 +105,7 @@ def configure_axes(app):
 
 
 def start_trend(app):
-    create_ai_checkboxes(app)
+    refresh_trend_selectors(app)
 
     if app.trend_running:
         return
@@ -165,12 +163,22 @@ def _numeric_value(value):
         return int(value)
 
     if isinstance(value, (int, float)):
-        return value
+        numeric = value
+    else:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
 
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0
+    return numeric if math.isfinite(numeric) else None
+
+
+def _csv_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and not math.isfinite(value):
+        return ""
+    return value
 
 
 def redraw_trend(app):
@@ -239,7 +247,7 @@ def export_csv(app):
             for name in tag_names:
                 values = app.trend_data["tags"].get(name, [])
                 value = values[index] if index < len(values) else ""
-                row.append("" if value is None else value)
+                row.append(_csv_value(value))
             writer.writerow(row)
 
     app.status_label.configure(text="● TREND EXPORTADA", text_color="lime")

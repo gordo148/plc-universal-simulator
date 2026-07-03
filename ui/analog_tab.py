@@ -11,7 +11,6 @@ def create_analog_row(app, index, tag):
 
     visible = tag.address
     protocol_address = tag.address
-    address_data = parse_analog_address(app, tag.address)
     name = tag.name
 
     ctk.CTkLabel(top, text=visible, width=100, font=("Arial", 14, "bold")).pack(side="left", padx=8)
@@ -92,7 +91,6 @@ def create_analog_row(app, index, tag):
         "slider": slider,
         "value_label": value_label,
         "live": live,
-        "address_data": address_data,
         "profile_mode": profile_mode,
         "profile_status": profile_status,
         "min_entry": min_entry,
@@ -102,14 +100,3 @@ def create_analog_row(app, index, tag):
         "direction": 1,
         "tag": tag
     })
-
-
-def parse_analog_address(app, address):
-    address = address.strip().upper()
-
-    if app.brand_menu.get() == "Siemens":
-        address = address.replace("DBW", "").replace("DBD", "")
-        return {"byte": int(address)}
-
-    address = address.replace("%MW", "").replace("MW", "")
-    return {"register": int(address)}

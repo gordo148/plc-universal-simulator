@@ -989,9 +989,9 @@ def set_tag_flag(app, tag, field, value):
     if field == "enabled_sim":
         app.generate_signals()
     elif field == "enabled_trend" and hasattr(app, "trend_selector_frame"):
-        from ui.trend_tab import create_ai_checkboxes
+        from ui.trend_tab import refresh_trend_selectors
 
-        create_ai_checkboxes(app)
+        refresh_trend_selectors(app)
     elif field == "enabled_alarm" and hasattr(app, "alarm_source_menu"):
         from ui.alarm_tab import update_alarm_sources
 

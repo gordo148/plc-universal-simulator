@@ -107,7 +107,7 @@ def add_alarm(app):
 
         if source not in {tag.name for tag in get_alarm_tags(app)}:
             raise ValueError("Alarm source is not enabled")
-    except Exception:
+    except (TypeError, ValueError):
         app.status_label.configure(text="● ERRO ALARME", text_color="orange")
         return
 

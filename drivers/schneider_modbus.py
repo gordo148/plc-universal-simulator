@@ -4,6 +4,10 @@ import inspect
 from pymodbus.client import ModbusTcpClient
 
 
+MAX_COILS_PER_READ = 2000
+MAX_REGISTERS_PER_READ = 125
+
+
 class SchneiderModbusDriver:
     def __init__(self):
         self.client = None
@@ -35,6 +39,10 @@ class SchneiderModbusDriver:
     def read_coils_block(self, start_address, count):
         if not self.is_connected():
             return None
+        if not 1 <= count <= MAX_COILS_PER_READ:
+            raise ValueError(
+                f"Coil read count must be 1..{MAX_COILS_PER_READ}"
+            )
 
         rd = self._request("read_coils", start_address, count=count)
 
@@ -46,6 +54,10 @@ class SchneiderModbusDriver:
     def read_registers_block(self, start_address, count):
         if not self.is_connected():
             return None
+        if not 1 <= count <= MAX_REGISTERS_PER_READ:
+            raise ValueError(
+                f"Register read count must be 1..{MAX_REGISTERS_PER_READ}"
+            )
 
         rd = self._request(
             "read_holding_registers",

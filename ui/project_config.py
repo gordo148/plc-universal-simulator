@@ -88,10 +88,6 @@ def open_project(app):
     return True
 
 
-# Backwards-compatible action name used by older callers.
-load_project = open_project
-
-
 def build_project_data(app):
     brand = app.brand_menu.get()
     output_tag = get_tag_by_name(app, app.pid_out_menu.get())
@@ -410,12 +406,12 @@ def _restore_pid(app, pid):
 
 
 def _restore_trends(app, trends):
-    from ui.trend_tab import clear_trend, create_ai_checkboxes, stop_trend
+    from ui.trend_tab import clear_trend, refresh_trend_selectors, stop_trend
 
     stop_trend(app)
     clear_trend(app)
     app.trend_auto_scale.set(bool(trends.get("auto_scale", True)))
-    create_ai_checkboxes(app)
+    refresh_trend_selectors(app)
 
     selected = set(trends.get("selected_curves", []))
     for name, variable in app.trend_tag_vars.items():
@@ -580,10 +576,9 @@ def reload_alarms(app, alarms):
     from ui.tag_manager import get_alarm_tags
 
     for row in app.alarm_rows:
-        try:
-            row["state"].master.destroy()
-        except Exception:
-            pass
+        container = row["state"].master
+        if container.winfo_exists():
+            container.destroy()
 
     app.alarms.clear()
     app.alarm_rows.clear()

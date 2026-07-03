@@ -12,7 +12,6 @@ def create_digital_row(app, index, tag):
 
     visible = tag.address
     protocol_address = tag.address
-    address_data = parse_digital_address(app, tag.address)
     name = tag.name
 
     ctk.CTkLabel(row, text=visible, width=120, font=("Arial", 14, "bold")).grid(row=0, column=1, padx=10)
@@ -50,30 +49,7 @@ def create_digital_row(app, index, tag):
         "name_entry": name_entry,
         "button": button,
         "live": live,
-        "address_data": address_data,
         "mode_menu": mode_menu,
         "pulse_entry": pulse_entry,
         "tag": tag
     })
-
-
-def parse_digital_address(app, address):
-    address = address.strip().upper()
-
-    if app.brand_menu.get() == "Siemens":
-        # Aceita DBX0.0 ou 0.0
-        address = address.replace("DBX", "")
-        byte_text, bit_text = address.split(".")
-
-        return {
-            "byte": int(byte_text),
-            "bit": int(bit_text)
-        }
-
-    # Schneider: aceita %M1000 ou M1000 ou 1000
-    address = address.replace("%M", "")
-    address = address.replace("M", "")
-
-    return {
-        "coil": int(address)
-    }
