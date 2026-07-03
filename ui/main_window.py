@@ -27,8 +27,10 @@ from ui.tag_manager import (
     create_tag_manager_tab,
     get_input_analog_tags,
     get_input_bool_tags,
+    get_invalid_tags_for_brand,
     get_numeric_tags,
     get_pid_output_tags,
+    refresh_tag_table,
     update_tag_address_context,
 )
 from ui.feedback_tab import (
@@ -210,6 +212,10 @@ class PLCSimulator:
 
     def generate_signals(self):
         self.tag_runtime.sync(getattr(self, "tags", []))
+        invalid_tags = get_invalid_tags_for_brand(self)
+        for tag in invalid_tags:
+            self.tag_runtime.invalidate(tag.name)
+
         self.clear_signal_frames()
 
         for i, tag in enumerate(get_input_bool_tags(self)):
@@ -229,8 +235,17 @@ class PLCSimulator:
         if hasattr(self, "alarm_source_menu"):
             update_alarm_sources(self)
 
+        if hasattr(self, "tag_table"):
+            refresh_tag_table(self)
+
         update_tag_address_context(self)
         update_dashboard(self, "Sinais gerados")
+
+        if invalid_tags:
+            self.status_label.configure(
+                text=f"● {len(invalid_tags)} TAG(S) INCOMPATÍVEL(IS)",
+                text_color="orange",
+            )
     
     def update_pid_sources(self):
         if not hasattr(self, "pid_pv_menu") or not hasattr(self, "pid_out_menu"):

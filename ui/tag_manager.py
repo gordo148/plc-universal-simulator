@@ -136,6 +136,14 @@ def create_tag_manager_tab(app):
     )
     app.tag_validation_label.pack(fill="x", padx=15, pady=(0, 5))
 
+    app.tag_database_validation_label = ctk.CTkLabel(
+        frame,
+        text="",
+        text_color="gray",
+        anchor="w",
+    )
+    app.tag_database_validation_label.pack(fill="x", padx=15, pady=(0, 5))
+
     header = ctk.CTkFrame(frame)
     header.pack(fill="x", padx=10, pady=(10, 0))
 
@@ -167,6 +175,24 @@ def create_header_cell(parent, text, column, width):
 
 
 def add_tag(app):
+    name = app.tag_name_entry.get().strip()
+    if not name:
+        app.tag_validation_label.configure(
+            text="Nome da tag não pode estar vazio",
+            text_color="red",
+        )
+        return
+
+    if any(
+        tag.name.strip().casefold() == name.casefold()
+        for tag in app.tags
+    ):
+        app.tag_validation_label.configure(
+            text=f"Nome de tag duplicado: {name}",
+            text_color="red",
+        )
+        return
+
     data_type = app.tag_type_menu.get()
     address = app.tag_address_entry.get().strip().upper()
     valid, validation_message = validate_tag_address(
@@ -182,7 +208,7 @@ def add_tag(app):
         return
 
     tag = Tag(
-        name=app.tag_name_entry.get(),
+        name=name,
         data_type=data_type,
         direction=app.tag_direction_menu.get(),
         address=address,
@@ -196,6 +222,23 @@ def add_tag(app):
     refresh_tag_table(app)
     app.tag_address_manual_edit = False
     app.generate_signals()
+
+
+def normalize_and_validate_tag_names(tags):
+    seen = set()
+    for index, tag in enumerate(tags, start=1):
+        name = str(tag.name or "").strip()
+        if not name:
+            return False, f"Tag {index}: nome vazio"
+
+        identity = name.casefold()
+        if identity in seen:
+            return False, f"Nome de tag duplicado: {name}"
+
+        tag.name = name
+        seen.add(identity)
+
+    return True, ""
 
 
 def validate_tag_address(brand, data_type, address):
@@ -750,6 +793,7 @@ def import_tia_csv(app):
         imported_tags,
         "Erro Import TIA CSV",
         f"● {len(imported_tags)} TAGS TIA IMPORTADAS",
+        target_brand="Siemens",
     )
 
 
@@ -786,6 +830,13 @@ def apply_imported_tags(
     success_text,
     target_brand=None,
 ):
+    names_valid, names_message = normalize_and_validate_tag_names(
+        imported_tags
+    )
+    if not names_valid:
+        messagebox.showerror(error_title, names_message)
+        return False
+
     previous_tags = app.tags
     previous_brand = None
     brand_changed = False
@@ -852,6 +903,8 @@ def refresh_tag_table(app):
     for tag in app.tags:
         create_tag_row(app, tag)
 
+    update_tag_database_validation(app)
+
 
 def create_tag_row(app, tag):
     row = ctk.CTkFrame(app.tag_table)
@@ -860,7 +913,18 @@ def create_tag_row(app, tag):
     ctk.CTkLabel(row, text=tag.name, width=COL_WIDTHS["name"], anchor="w").grid(row=0, column=0, padx=4, pady=5)
     ctk.CTkLabel(row, text=tag.data_type, width=COL_WIDTHS["type"], anchor="center").grid(row=0, column=1, padx=4)
     ctk.CTkLabel(row, text=tag.direction, width=COL_WIDTHS["direction"], anchor="center").grid(row=0, column=2, padx=4)
-    ctk.CTkLabel(row, text=tag.address, width=COL_WIDTHS["address"], anchor="center").grid(row=0, column=3, padx=4)
+    address_valid, _ = validate_tag_address(
+        app.brand_menu.get(),
+        tag.data_type,
+        tag.address,
+    )
+    ctk.CTkLabel(
+        row,
+        text=tag.address if address_valid else f"⚠ {tag.address}",
+        text_color="white" if address_valid else "red",
+        width=COL_WIDTHS["address"],
+        anchor="center",
+    ).grid(row=0, column=3, padx=4)
 
     sim_var = ctk.BooleanVar(value=tag.enabled_sim)
     trend_var = ctk.BooleanVar(value=tag.enabled_trend)
@@ -939,12 +1003,50 @@ def delete_tag(app, tag):
     app.generate_signals()
 
 
+def is_tag_compatible(app, tag):
+    valid, _ = validate_tag_address(
+        app.brand_menu.get(),
+        tag.data_type,
+        tag.address,
+    )
+    return valid
+
+
+def get_invalid_tags_for_brand(app):
+    return [
+        tag for tag in getattr(app, "tags", [])
+        if not is_tag_compatible(app, tag)
+    ]
+
+
+def update_tag_database_validation(app):
+    if not hasattr(app, "tag_database_validation_label"):
+        return
+
+    invalid_tags = get_invalid_tags_for_brand(app)
+    if invalid_tags:
+        names = ", ".join(tag.name or "<sem nome>" for tag in invalid_tags)
+        app.tag_database_validation_label.configure(
+            text=(
+                f"⚠ {len(invalid_tags)} tag(s) incompatível(is) com "
+                f"{app.brand_menu.get()}: {names}. Ignoradas pelos separadores runtime."
+            ),
+            text_color="red",
+        )
+    else:
+        app.tag_database_validation_label.configure(
+            text="Todas as tags são compatíveis com a marca selecionada",
+            text_color="lime",
+        )
+
+
 def get_input_bool_tags(app):
     return [
         tag for tag in app.tags
         if tag.direction == "Input"
         and tag.data_type == "BOOL"
         and tag.enabled_sim
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -954,6 +1056,7 @@ def get_input_analog_tags(app):
         if tag.direction == "Input"
         and tag.data_type in ["INT", "REAL"]
         and tag.enabled_sim
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -961,6 +1064,7 @@ def get_trend_tags(app):
     return [
         tag for tag in app.tags
         if tag.enabled_trend
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -968,6 +1072,7 @@ def get_alarm_tags(app):
     return [
         tag for tag in app.tags
         if tag.enabled_alarm
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -975,6 +1080,7 @@ def get_dashboard_tags(app):
     return [
         tag for tag in getattr(app, "tags", [])
         if tag.enabled_dashboard
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -982,6 +1088,7 @@ def get_numeric_tags(app):
     return [
         tag for tag in getattr(app, "tags", [])
         if tag.data_type in ["INT", "REAL"]
+        and is_tag_compatible(app, tag)
     ]
 
 
@@ -1003,4 +1110,5 @@ def get_feedback_tags(app):
     return [
         tag for tag in app.tags
         if tag.direction == "Feedback"
+        and is_tag_compatible(app, tag)
     ]

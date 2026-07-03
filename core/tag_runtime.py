@@ -24,13 +24,29 @@ class RuntimeTagCache:
 
     def __init__(self) -> None:
         self._values: dict[str, TagRuntime] = {}
+        self._definitions: dict[str, tuple[str, str, str]] = {}
 
     def sync(self, definitions: Iterable[TagDefinition]) -> None:
-        names = {tag.name for tag in definitions}
-        self._values = {
-            name: self._values.get(name, TagRuntime())
-            for name in names
-        }
+        next_values = {}
+        next_definitions = {}
+
+        for tag in definitions:
+            signature = (
+                str(tag.data_type).strip().upper(),
+                str(tag.direction).strip(),
+                str(tag.address).strip().upper(),
+            )
+            next_definitions[tag.name] = signature
+            if self._definitions.get(tag.name) == signature:
+                next_values[tag.name] = self._values.get(
+                    tag.name,
+                    TagRuntime(),
+                )
+            else:
+                next_values[tag.name] = TagRuntime()
+
+        self._values = next_values
+        self._definitions = next_definitions
 
     def update(
         self,
@@ -65,6 +81,7 @@ class RuntimeTagCache:
     def clear(self) -> None:
         """Discard all temporary runtime values."""
         self._values.clear()
+        self._definitions.clear()
 
     def get(self, name: str) -> TagRuntime | None:
         return self._values.get(name)

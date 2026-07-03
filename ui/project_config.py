@@ -8,6 +8,7 @@ from ui.tag_manager import (
     get_numeric_tags,
     get_pid_output_tags,
     get_tag_by_name,
+    normalize_and_validate_tag_names,
     refresh_tag_table,
 )
 
@@ -208,6 +209,10 @@ def _apply_project_data(app, project):
             for tag_data in project.get("tags", [])
             if isinstance(tag_data, dict)
         ]
+        names_valid, names_message = normalize_and_validate_tag_names(tags)
+        if not names_valid:
+            raise ValueError(names_message)
+
         _restore_tag_feature_configuration(tags, project)
         app.tags = tags
         app.tag_runtime.clear()
