@@ -123,3 +123,44 @@ def test_rockwell_suggestion_returns_tag_manager_name():
         "Motor_Run",
     ) == "Motor_Run"
     assert suggest_address("Rockwell", "REAL", [], "Tank_Level") == "Tank_Level"
+
+
+@pytest.mark.parametrize(
+    ("data_type", "address"),
+    [
+        ("BOOL", "CIO0.00"),
+        ("BOOL", "CIO100.05"),
+        ("INT", "D100"),
+        ("INT", "D200"),
+        ("REAL", "D300"),
+    ],
+)
+def test_valid_omron_addresses(data_type, address):
+    assert validate_tag_address("Omron", data_type, address)[0]
+
+
+@pytest.mark.parametrize(
+    ("data_type", "address"),
+    [
+        ("BOOL", "CIO0"),
+        ("BOOL", "CIO0.16"),
+        ("BOOL", "D0.00"),
+        ("INT", "CIO100"),
+        ("INT", "D100.00"),
+        ("REAL", "DBD300"),
+    ],
+)
+def test_invalid_omron_addresses(data_type, address):
+    assert not validate_tag_address("Omron", data_type, address)[0]
+
+
+def test_omron_suggestions_skip_occupied_bits_and_real_words():
+    tags = [
+        TagDefinition("Bit0", "BOOL", "Input", "CIO0.00"),
+        TagDefinition("Integer0", "INT", "Input", "D0"),
+        TagDefinition("Real1", "REAL", "Input", "D1"),
+    ]
+
+    assert suggest_address("Omron", "BOOL", tags) == "CIO0.01"
+    assert suggest_address("Omron", "INT", tags) == "D3"
+    assert suggest_address("Omron", "REAL", tags) == "D3"

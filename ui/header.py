@@ -58,7 +58,7 @@ def create_header(app):
     ctk.CTkLabel(app.header, text="Marca").grid(row=0, column=0, padx=5)
     app.brand_menu = ctk.CTkOptionMenu(
         app.header,
-        values=["Siemens", "Schneider", "Modbus TCP", "Rockwell"],
+        values=["Siemens", "Schneider", "Modbus TCP", "Rockwell", "Omron"],
         command=app.update_brand
     )
     app.brand_menu.set("Siemens")
@@ -103,6 +103,7 @@ def create_header(app):
     app.create_schneider_options = lambda: create_schneider_options(app)
     app.create_modbus_options = lambda: create_modbus_options(app)
     app.create_rockwell_options = lambda: create_rockwell_options(app)
+    app.create_omron_options = lambda: create_omron_options(app)
     app.create_siemens_options()
     update_top_status_bar(app)
     app.app.after(
@@ -315,3 +316,30 @@ def create_rockwell_options(app):
         text="Rockwell EtherNet/IP — symbolic tags",
         text_color="gray",
     ).grid(row=0, column=0, padx=20)
+
+
+def create_omron_options(app):
+    clear_brand_frame(app)
+
+    fields = (
+        ("FINS Port", "port_entry", "9600"),
+        ("Destination Node", "destination_node_entry", "0"),
+        ("Source Node", "source_node_entry", "1"),
+    )
+    for index, (label, attribute, default) in enumerate(fields):
+        column = index * 2
+        ctk.CTkLabel(app.brand_frame, text=label).grid(
+            row=0,
+            column=column,
+            padx=5,
+        )
+        entry = ctk.CTkEntry(app.brand_frame, width=90)
+        entry.insert(0, default)
+        entry.grid(row=0, column=column + 1, padx=5)
+        setattr(app, attribute, entry)
+
+    ctk.CTkLabel(
+        app.brand_frame,
+        text="Omron FINS/UDP — CIO bits / DM words",
+        text_color="gray",
+    ).grid(row=0, column=6, padx=20)

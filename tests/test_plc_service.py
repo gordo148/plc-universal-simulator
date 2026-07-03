@@ -251,3 +251,75 @@ def test_rockwell_offline_read_does_not_call_driver():
     assert service.read([tag], brand="Rockwell") is False
     assert cache.get("Start").valid is False
     driver.read_tags.assert_not_called()
+
+
+def test_omron_connect_routes_fins_configuration(monkeypatch):
+    driver = Mock()
+    driver.connect.return_value = True
+    driver_type = Mock(return_value=driver)
+    monkeypatch.setattr(plc_service, "OmronFINSDriver", driver_type)
+    service = PLCService()
+
+    assert service.connect(
+        "Omron",
+        "192.0.2.30",
+        port="9600",
+        destination_node="10",
+        source_node="20",
+    )
+
+    driver.connect.assert_called_once_with("192.0.2.30", 9600, 10, 20)
+    assert service._brand == "Omron"
+
+
+def test_omron_read_routes_types_and_updates_runtime_cache():
+    driver = connected_driver()
+    driver.read_bool.return_value = True
+    driver.read_int.return_value = -123
+    driver.read_real.return_value = 12.5004
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Run", "BOOL", "Input", "CIO0.00"),
+        TagDefinition("Count", "INT", "Input", "D100"),
+        TagDefinition("Level", "REAL", "Input", "D300"),
+    ]
+
+    assert service.read(tags, brand="Omron")
+
+    driver.read_bool.assert_called_once_with("CIO0.00")
+    driver.read_int.assert_called_once_with("D100")
+    driver.read_real.assert_called_once_with("D300")
+    assert cache.get_value("Run") is True
+    assert cache.get_value("Count") == -123
+    assert cache.get_value("Level") == 12.5
+
+
+def test_omron_write_routes_bool_int_and_real():
+    driver = connected_driver()
+    driver.write_bool.return_value = True
+    driver.write_int.return_value = -10
+    driver.write_real.return_value = 3.5
+    service = PLCService(driver)
+    service._brand = "Omron"
+    bool_tag = TagDefinition("Run", "BOOL", "Output", "CIO100.05")
+    int_tag = TagDefinition("Count", "INT", "Output", "D200")
+    real_tag = TagDefinition("Level", "REAL", "Output", "D300")
+
+    assert service.write_bool(bool_tag, True) is True
+    assert service.write_numeric(int_tag, -10) == -10
+    assert service.write_numeric(real_tag, 3.5) == 3.5
+
+    driver.write_bool.assert_called_once_with("CIO100.05", True)
+    driver.write_int.assert_called_once_with("D200", -10)
+    driver.write_real.assert_called_once_with("D300", 3.5)
+
+
+def test_omron_offline_read_does_not_call_driver():
+    driver = Mock()
+    driver.is_connected.return_value = False
+    service = PLCService(driver)
+    tag = TagDefinition("Run", "BOOL", "Input", "CIO0.00")
+
+    assert service.read([tag], brand="Omron") is False
+    driver.read_bool.assert_not_called()

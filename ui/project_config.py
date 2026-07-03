@@ -19,7 +19,13 @@ from ui.tag_manager import (
 PROJECT_EXTENSION = ".simproject"
 PROJECT_FORMAT = "plc-universal-simulator-project"
 PROJECT_VERSION = 1
-SUPPORTED_BRANDS = ("Siemens", "Schneider", "Modbus TCP", "Rockwell")
+SUPPORTED_BRANDS = (
+    "Siemens",
+    "Schneider",
+    "Modbus TCP",
+    "Rockwell",
+    "Omron",
+)
 
 
 def new_project(app):
@@ -117,6 +123,12 @@ def build_project_data(app):
         connection["settings"] = {
             "port": app.port_entry.get(),
             "slave_id": app.slave_entry.get(),
+        }
+    elif brand == "Omron":
+        connection["settings"] = {
+            "port": app.port_entry.get(),
+            "destination_node": app.destination_node_entry.get(),
+            "source_node": app.source_node_entry.get(),
         }
 
     digital_inputs = []
@@ -265,8 +277,10 @@ def _apply_project_data(app, project, show_error=True):
             app.create_schneider_options()
         elif brand == "Modbus TCP":
             app.create_modbus_options()
-        else:
+        elif brand == "Rockwell":
             app.create_rockwell_options()
+        else:
+            app.create_omron_options()
 
         update_tag_address_context(app)
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
@@ -321,6 +335,15 @@ def _restore_connection_settings(app, brand, settings):
         return
 
     if brand == "Rockwell":
+        return
+
+    if brand == "Omron":
+        _set_entry(app.port_entry, settings.get("port", "9600"))
+        _set_entry(
+            app.destination_node_entry,
+            settings.get("destination_node", "0"),
+        )
+        _set_entry(app.source_node_entry, settings.get("source_node", "1"))
         return
 
     model = settings.get("model", "M221")

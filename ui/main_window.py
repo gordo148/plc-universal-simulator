@@ -140,6 +140,14 @@ class PLCSimulator:
                     port=self.port_entry.get(),
                     slave_id=self.slave_entry.get(),
                 )
+            elif brand == "Omron":
+                result = self.plc_service.connect(
+                    brand,
+                    ip,
+                    port=self.port_entry.get(),
+                    destination_node=self.destination_node_entry.get(),
+                    source_node=self.source_node_entry.get(),
+                )
             else:
                 result = self.plc_service.connect(brand, ip)
 
@@ -187,8 +195,10 @@ class PLCSimulator:
             self.create_schneider_options()
         elif value == "Modbus TCP":
             self.create_modbus_options()
-        else:
+        elif value == "Rockwell":
             self.create_rockwell_options()
+        else:
+            self.create_omron_options()
 
         update_tag_address_context(self)
         self.generate_signals()

@@ -15,6 +15,7 @@ from drivers.schneider_modbus import (
     SchneiderModbusDriver,
 )
 from drivers.modbus_tcp import ModbusTCPDriver
+from drivers.omron_fins import OmronFINSDriver
 from drivers.rockwell_enip import RockwellEtherNetIPDriver
 from drivers.siemens_s7 import SiemensS7Driver
 
@@ -60,6 +61,14 @@ class PLCService:
         elif brand == "Rockwell":
             driver = RockwellEtherNetIPDriver()
             connect_args = (ip,)
+        elif brand == "Omron":
+            driver = OmronFINSDriver()
+            connect_args = (
+                ip,
+                int(options.get("port", 9600)),
+                int(options.get("destination_node", 0)),
+                int(options.get("source_node", 1)),
+            )
         else:
             raise ValueError(f"Unsupported PLC brand: {brand}")
 
@@ -127,6 +136,8 @@ class PLCService:
             return self._scan_modbus(tags, _parse_modbus_tcp_address)
         if active_brand == "Rockwell":
             return self._scan_rockwell(tags)
+        if active_brand == "Omron":
+            return self._scan_omron(tags)
         return False
 
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
@@ -140,6 +151,9 @@ class PLCService:
             elif self._brand == "Rockwell":
                 tag_name = _parse_rockwell_address(tag)
                 result = self._driver.write_tag(tag_name, bool(value))
+            elif self._brand == "Omron":
+                address = _parse_omron_address(tag)
+                result = self._driver.write_bool(address, bool(value))
             else:
                 address = self._parse_modbus_address(tag)
                 result = self._driver.write_digital(address, bool(value))
@@ -182,6 +196,16 @@ class PLCService:
                     float(value) if data_type == "REAL" else int(value)
                 )
                 result = self._driver.write_tag(tag_name, typed_value)
+            elif self._brand == "Omron":
+                if not isinstance(target, TagDefinition):
+                    raise ValueError("Omron writes require a tag definition")
+                address = _parse_omron_address(target)
+                if data_type == "INT":
+                    result = self._driver.write_int(address, int(value))
+                elif data_type == "REAL":
+                    result = self._driver.write_real(address, float(value))
+                else:
+                    raise ValueError("Omron numeric writes require INT or REAL")
             else:
                 address = self._numeric_address(target)
                 result = self._driver.write_analog(address, value, data_type)
@@ -331,6 +355,39 @@ class PLCService:
                     RuntimeValueSource.PLC,
                 )
             except (TypeError, ValueError):
+                self.runtime_cache.invalidate(tag.name)
+                success = False
+        return success
+
+    def _scan_omron(self, tags: list[TagDefinition]) -> bool:
+        success = True
+        for tag in tags:
+            try:
+                address = _parse_omron_address(tag)
+                if tag.data_type == "BOOL":
+                    value = self._driver.read_bool(address)
+                elif tag.data_type == "INT":
+                    value = self._driver.read_int(address)
+                else:
+                    value = self._driver.read_real(address)
+
+                if value is None:
+                    self.runtime_cache.invalidate(tag.name)
+                    success = False
+                    continue
+                if tag.data_type == "BOOL":
+                    value = bool(value)
+                elif tag.data_type == "INT":
+                    value = int(value)
+                else:
+                    value = round(float(value), 3)
+                self.runtime_cache.update(
+                    tag.name,
+                    value,
+                    RuntimeValueSource.PLC,
+                )
+            except Exception:
+                LOGGER.exception("Omron FINS read failed for tag %s", tag.name)
                 self.runtime_cache.invalidate(tag.name)
                 success = False
         return success
@@ -509,4 +566,17 @@ def _parse_rockwell_address(tag: TagDefinition) -> str:
     address = str(tag.address).strip()
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", address) is None:
         raise ValueError("Invalid Rockwell symbolic tag name")
+    return address
+
+
+def _parse_omron_address(tag: TagDefinition) -> str:
+    address = str(tag.address).strip().upper()
+    if tag.data_type == "BOOL":
+        match = re.fullmatch(r"CIO\d+\.(?:0\d|1[0-5])", address)
+    elif tag.data_type in ("INT", "REAL"):
+        match = re.fullmatch(r"D\d+", address)
+    else:
+        raise ValueError("Unsupported tag type")
+    if match is None:
+        raise ValueError("Invalid Omron FINS address")
     return address

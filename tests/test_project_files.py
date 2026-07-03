@@ -69,3 +69,24 @@ def test_rockwell_project_requires_only_ip(project_app):
         "Start_Button",
         "Tank_Level",
     ]
+
+
+def test_omron_project_preserves_fins_connection_settings(project_app):
+    value_type = type(project_app.ip_entry)
+    project_app.brand_menu.value = "Omron"
+    project_app.port_entry = value_type("9600")
+    project_app.destination_node_entry = value_type("10")
+    project_app.source_node_entry = value_type("20")
+    project_app.tags[0].address = "CIO0.00"
+    project_app.tags[1].address = "D300"
+
+    staged = project_config._stage_project_data(
+        project_config.build_project_data(project_app)
+    )
+
+    assert staged["plc"]["brand"] == "Omron"
+    assert staged["plc"]["settings"] == {
+        "port": "9600",
+        "destination_node": "10",
+        "source_node": "20",
+    }

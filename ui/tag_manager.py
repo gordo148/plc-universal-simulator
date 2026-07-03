@@ -290,6 +290,18 @@ def validate_tag_address(brand, data_type, address):
             )
             for data_type in ("BOOL", "INT", "REAL")
         }
+    elif brand == "Omron":
+        patterns = {
+            "BOOL": (
+                r"CIO\d+\.(?:0\d|1[0-5])",
+                "BOOL Omron requer CIO word.bit (ex.: CIO100.05)",
+            ),
+            "INT": (r"D\d+", "INT Omron requer palavra DM (ex.: D100)"),
+            "REAL": (
+                r"D\d+",
+                "REAL Omron requer palavra DM e ocupa 2 palavras",
+            ),
+        }
     else:
         return False, f"Marca PLC não suportada: {brand}"
 
@@ -462,6 +474,23 @@ def suggest_address(brand, data_type, tags, tag_name=None):
     if brand == "Rockwell":
         return str(tag_name or "").strip()
 
+    if brand == "Omron":
+        occupied_bits, occupied_words = _omron_occupancy(tags)
+        if data_type == "BOOL":
+            candidate = 0
+            while (candidate // 16, candidate % 16) in occupied_bits:
+                candidate += 1
+            return f"CIO{candidate // 16}.{candidate % 16:02d}"
+
+        word_count = 2 if data_type == "REAL" else 1
+        candidate = 0
+        while any(
+            word in occupied_words
+            for word in range(candidate, candidate + word_count)
+        ):
+            candidate += 1
+        return f"D{candidate}"
+
     raise ValueError(f"Marca PLC não suportada: {brand}")
 
 
@@ -512,6 +541,23 @@ def _modbus_occupancy(tags, brand):
             occupied_registers.update(range(index, index + count))
 
     return occupied_coils, occupied_registers
+
+
+def _omron_occupancy(tags):
+    occupied_bits = set()
+    occupied_words = set()
+    for tag in tags:
+        if not validate_tag_address("Omron", tag.data_type, tag.address)[0]:
+            continue
+        address = str(tag.address).strip().upper()
+        if tag.data_type == "BOOL":
+            word_text, bit_text = address.removeprefix("CIO").split(".")
+            occupied_bits.add((int(word_text), int(bit_text)))
+        else:
+            word = int(address.removeprefix("D"))
+            count = 2 if tag.data_type == "REAL" else 1
+            occupied_words.update(range(word, word + count))
+    return occupied_bits, occupied_words
 
 
 def parse_csv_bool(value):
