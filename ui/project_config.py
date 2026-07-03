@@ -18,6 +18,7 @@ from ui.tag_manager import (
 PROJECT_EXTENSION = ".simproject"
 PROJECT_FORMAT = "plc-universal-simulator-project"
 PROJECT_VERSION = 1
+SUPPORTED_BRANDS = ("Siemens", "Schneider", "Modbus TCP")
 
 
 def new_project(app):
@@ -103,13 +104,18 @@ def build_project_data(app):
             "slot": app.slot_entry.get(),
             "db_number": app.db_entry.get(),
         }
-    else:
+    elif brand == "Schneider":
         connection["settings"] = {
             "model": app.schneider_model_menu.get(),
             "port": app.port_entry.get(),
             "slave_id": app.slave_entry.get(),
             "coil_start": app.coil_start_entry.get(),
             "register_start": app.reg_start_entry.get(),
+        }
+    else:
+        connection["settings"] = {
+            "port": app.port_entry.get(),
+            "slave_id": app.slave_entry.get(),
         }
 
     digital_inputs = []
@@ -248,14 +254,16 @@ def _apply_project_data(app, project, show_error=True):
 
         plc = project.get("plc", {})
         brand = plc.get("brand", "Siemens")
-        if brand not in ("Siemens", "Schneider"):
+        if brand not in SUPPORTED_BRANDS:
             raise ValueError(f"Marca PLC inválida: {brand}")
 
         app.brand_menu.set(brand)
         if brand == "Siemens":
             app.create_siemens_options()
-        else:
+        elif brand == "Schneider":
             app.create_schneider_options()
+        else:
+            app.create_modbus_options()
 
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
         _restore_connection_settings(app, brand, plc.get("settings", {}))
@@ -301,6 +309,11 @@ def _restore_connection_settings(app, brand, settings):
         _set_entry(app.rack_entry, settings.get("rack", "0"))
         _set_entry(app.slot_entry, settings.get("slot", "1"))
         _set_entry(app.db_entry, settings.get("db_number", "100"))
+        return
+
+    if brand == "Modbus TCP":
+        _set_entry(app.port_entry, settings.get("port", "502"))
+        _set_entry(app.slave_entry, settings.get("slave_id", "1"))
         return
 
     model = settings.get("model", "M221")
@@ -453,7 +466,7 @@ def _stage_project_data(project):
     if not isinstance(plc, dict):
         raise ValueError("Configuração PLC inválida")
     brand = plc.get("brand", "Siemens")
-    if brand not in ("Siemens", "Schneider"):
+    if brand not in SUPPORTED_BRANDS:
         raise ValueError(f"Marca PLC inválida: {brand}")
     if not isinstance(plc.get("settings", {}), dict):
         raise ValueError("Definições de ligação PLC inválidas")

@@ -5,12 +5,33 @@ from snap7.util import set_bool, set_int, set_real
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache
 from services.plc_service import PLCService
+from services import plc_service
 
 
 def connected_driver():
     driver = Mock()
     driver.is_connected.return_value = True
     return driver
+
+
+def test_generic_modbus_connect_uses_generic_driver(monkeypatch):
+    driver = Mock()
+    driver.connect.return_value = True
+    driver.is_connected.return_value = True
+    driver_type = Mock(return_value=driver)
+    monkeypatch.setattr(plc_service, "ModbusTCPDriver", driver_type)
+    service = PLCService()
+
+    assert service.connect(
+        "Modbus TCP",
+        "192.0.2.10",
+        port="1502",
+        slave_id="7",
+    )
+
+    driver_type.assert_called_once_with()
+    driver.connect.assert_called_once_with("192.0.2.10", 1502, 7)
+    assert service._brand == "Modbus TCP"
 
 
 def test_siemens_read_routes_to_driver_and_decodes_values():
@@ -87,3 +108,57 @@ def test_schneider_writes_route_by_tag_type():
 
     driver.write_digital.assert_called_once_with(5, False)
     driver.write_analog.assert_called_once_with(20, 3.5, "REAL")
+
+
+def test_generic_modbus_read_routes_all_address_forms_to_mock_driver():
+    driver = connected_driver()
+    driver.read_coils_block.return_value = [True]
+    driver.read_registers_block.return_value = [42, 0x4148, 0x0000]
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Run", "BOOL", "Input", "M0"),
+        TagDefinition("Count", "INT", "Input", "10"),
+        TagDefinition("Level", "REAL", "Input", "%MW11"),
+    ]
+
+    assert service.read(tags, brand="Modbus TCP")
+
+    driver.read_coils_block.assert_called_once_with(0, 1)
+    driver.read_registers_block.assert_called_once_with(10, 3)
+    assert cache.get_value("Run") is True
+    assert cache.get_value("Count") == 42
+    assert cache.get_value("Level") == 12.5
+
+
+def test_generic_modbus_writes_route_coils_and_holding_registers():
+    driver = connected_driver()
+    driver.write_digital.return_value = True
+    driver.write_analog.side_effect = [17, 3.5]
+    service = PLCService(driver)
+    service._brand = "Modbus TCP"
+    bool_tag = TagDefinition("Run", "BOOL", "Output", "5")
+    int_tag = TagDefinition("Count", "INT", "Output", "MW10")
+    real_tag = TagDefinition("Speed", "REAL", "Output", "%MW20")
+
+    assert service.write_bool(bool_tag, True) is True
+    assert service.write_numeric(int_tag, 17) == 17
+    assert service.write_numeric(real_tag, 3.5) == 3.5
+
+    driver.write_digital.assert_called_once_with(5, True)
+    assert driver.write_analog.call_args_list == [
+        ((10, 17, "INT"), {}),
+        ((20, 3.5, "REAL"), {}),
+    ]
+
+
+def test_generic_modbus_offline_read_never_calls_driver():
+    driver = Mock()
+    driver.is_connected.return_value = False
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tag = TagDefinition("Run", "BOOL", "Input", "0")
+
+    assert service.read([tag], brand="Modbus TCP") is False
+    assert cache.get("Run").valid is False
+    driver.read_coils_block.assert_not_called()

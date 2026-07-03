@@ -258,6 +258,21 @@ def validate_tag_address(brand, data_type, address):
             "INT": (r"%MW\d+", "INT Schneider requer %MW index (ex.: %MW0)"),
             "REAL": (r"%MW\d+", "REAL Schneider requer %MW index e ocupa 2 registos"),
         }
+    elif brand == "Modbus TCP":
+        patterns = {
+            "BOOL": (
+                r"(?:%?M)?\d+",
+                "BOOL Modbus TCP requer %M0, M0 ou 0",
+            ),
+            "INT": (
+                r"(?:%?MW)?\d+",
+                "INT Modbus TCP requer %MW0, MW0 ou 0",
+            ),
+            "REAL": (
+                r"(?:%?MW)?\d+",
+                "REAL Modbus TCP requer %MW0, MW0 ou 0 e ocupa 2 registos",
+            ),
+        }
     else:
         return False, f"Marca PLC não suportada: {brand}"
 
@@ -269,7 +284,7 @@ def validate_tag_address(brand, data_type, address):
     if re.fullmatch(pattern, address) is None:
         return False, error_message
 
-    if brand == "Schneider" and data_type == "REAL":
+    if brand in ("Schneider", "Modbus TCP") and data_type == "REAL":
         return True, "Endereço válido; REAL ocupa 2 registos %MW"
     return True, "Endereço válido"
 
@@ -368,8 +383,8 @@ def suggest_address(brand, data_type, tags):
                 return f"{prefix}{candidate}"
             candidate += size
 
-    if brand == "Schneider":
-        occupied_coils, occupied_registers = _schneider_occupancy(tags)
+    if brand in ("Schneider", "Modbus TCP"):
+        occupied_coils, occupied_registers = _modbus_occupancy(tags, brand)
 
         if data_type == "BOOL":
             candidate = 0
@@ -412,21 +427,28 @@ def _siemens_occupancy(tags):
 
 
 def _schneider_occupancy(tags):
+    return _modbus_occupancy(tags, "Schneider")
+
+
+def _modbus_occupancy(tags, brand):
     occupied_coils = set()
     occupied_registers = set()
 
     for tag in tags:
-        valid, _ = validate_tag_address("Schneider", tag.data_type, tag.address)
+        valid, _ = validate_tag_address(brand, tag.data_type, tag.address)
         if not valid:
             continue
 
         address = tag.address.strip().upper()
+        index_match = re.search(r"\d+$", address)
+        if index_match is None:
+            continue
+        index = int(index_match.group())
         if tag.data_type == "BOOL":
-            occupied_coils.add(int(address.removeprefix("%M")))
+            occupied_coils.add(index)
         else:
-            register = int(address.removeprefix("%MW"))
             count = 2 if tag.data_type == "REAL" else 1
-            occupied_registers.update(range(register, register + count))
+            occupied_registers.update(range(index, index + count))
 
     return occupied_coils, occupied_registers
 

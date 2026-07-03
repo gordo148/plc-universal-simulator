@@ -1,6 +1,7 @@
 """Centralized PLC polling and runtime tag decoding."""
 
 import logging
+import re
 import struct
 from typing import Any, Iterable
 
@@ -13,6 +14,7 @@ from drivers.schneider_modbus import (
     MAX_REGISTERS_PER_READ,
     SchneiderModbusDriver,
 )
+from drivers.modbus_tcp import ModbusTCPDriver
 from drivers.siemens_s7 import SiemensS7Driver
 
 
@@ -42,6 +44,13 @@ class PLCService:
             )
         elif brand == "Schneider":
             driver = SchneiderModbusDriver()
+            connect_args = (
+                ip,
+                int(options.get("port", 502)),
+                int(options.get("slave_id", 1)),
+            )
+        elif brand == "Modbus TCP":
+            driver = ModbusTCPDriver()
             connect_args = (
                 ip,
                 int(options.get("port", 502)),
@@ -109,7 +118,9 @@ class PLCService:
         if active_brand == "Siemens":
             return self._scan_siemens(tags)
         if active_brand == "Schneider":
-            return self._scan_schneider(tags)
+            return self._scan_modbus(tags, _parse_schneider_address)
+        if active_brand == "Modbus TCP":
+            return self._scan_modbus(tags, _parse_modbus_tcp_address)
         return False
 
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
@@ -121,7 +132,7 @@ class PLCService:
                 byte_index, bit_index = _parse_siemens_address(tag)
                 result = self._driver.write_digital(byte_index, bit_index, bool(value))
             else:
-                address = _parse_schneider_address(tag)
+                address = self._parse_modbus_address(tag)
                 result = self._driver.write_digital(address, bool(value))
         except Exception:
             LOGGER.exception("PLC digital write failed for tag %s", tag.name)
@@ -171,12 +182,17 @@ class PLCService:
             if self._brand == "Siemens":
                 address, _ = _parse_siemens_address(target)
                 return address
-            return _parse_schneider_address(target)
+            return self._parse_modbus_address(target)
 
         address = str(target).strip().upper()
         if self._brand == "Siemens":
             return int(address.replace("DBW", "").replace("DBD", ""))
         return int(address.replace("%MW", "").replace("MW", ""))
+
+    def _parse_modbus_address(self, tag: TagDefinition) -> int:
+        if self._brand == "Modbus TCP":
+            return _parse_modbus_tcp_address(tag)
+        return _parse_schneider_address(tag)
 
     def _scan_siemens(self, tags: list[TagDefinition]) -> bool:
         parsed = []
@@ -225,13 +241,13 @@ class PLCService:
 
         return True
 
-    def _scan_schneider(self, tags: list[TagDefinition]) -> bool:
+    def _scan_modbus(self, tags: list[TagDefinition], address_parser) -> bool:
         coils = []
         registers = []
 
         for tag in tags:
             try:
-                address = _parse_schneider_address(tag)
+                address = address_parser(tag)
                 if tag.data_type == "BOOL":
                     coils.append((tag, address))
                 elif tag.data_type in ("INT", "REAL"):
@@ -400,3 +416,17 @@ def _parse_schneider_address(tag: TagDefinition) -> int:
             raise ValueError("Invalid register address")
         return parsed
     raise ValueError("Unsupported tag type")
+
+
+def _parse_modbus_tcp_address(tag: TagDefinition) -> int:
+    address = str(tag.address).strip().upper()
+    if tag.data_type == "BOOL":
+        match = re.fullmatch(r"(?:%?M)?(\d+)", address)
+    elif tag.data_type in ("INT", "REAL"):
+        match = re.fullmatch(r"(?:%?MW)?(\d+)", address)
+    else:
+        raise ValueError("Unsupported tag type")
+
+    if match is None:
+        raise ValueError("Invalid Modbus TCP address")
+    return int(match.group(1))

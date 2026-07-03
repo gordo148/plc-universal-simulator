@@ -181,8 +181,10 @@ class PLCSimulator:
 
         if value == "Siemens":
             self.create_siemens_options()
-        else:
+        elif value == "Schneider":
             self.create_schneider_options()
+        else:
+            self.create_modbus_options()
 
         self.generate_signals()
 

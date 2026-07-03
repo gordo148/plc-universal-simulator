@@ -58,7 +58,7 @@ def create_header(app):
     ctk.CTkLabel(app.header, text="Marca").grid(row=0, column=0, padx=5)
     app.brand_menu = ctk.CTkOptionMenu(
         app.header,
-        values=["Siemens", "Schneider"],
+        values=["Siemens", "Schneider", "Modbus TCP"],
         command=app.update_brand
     )
     app.brand_menu.set("Siemens")
@@ -101,6 +101,7 @@ def create_header(app):
 
     app.create_siemens_options = lambda: create_siemens_options(app)
     app.create_schneider_options = lambda: create_schneider_options(app)
+    app.create_modbus_options = lambda: create_modbus_options(app)
     app.create_siemens_options()
     update_top_status_bar(app)
     app.app.after(
@@ -276,3 +277,31 @@ def create_schneider_options(app):
         text_color="gray"
     )
     app.schneider_info.grid(row=0, column=10, padx=20)
+
+
+def create_modbus_options(app):
+    clear_brand_frame(app)
+
+    ctk.CTkLabel(app.brand_frame, text="Porta").grid(
+        row=0,
+        column=0,
+        padx=5,
+    )
+    app.port_entry = ctk.CTkEntry(app.brand_frame, width=80)
+    app.port_entry.insert(0, "502")
+    app.port_entry.grid(row=0, column=1, padx=5)
+
+    ctk.CTkLabel(app.brand_frame, text="Slave ID").grid(
+        row=0,
+        column=2,
+        padx=5,
+    )
+    app.slave_entry = ctk.CTkEntry(app.brand_frame, width=80)
+    app.slave_entry.insert(0, "1")
+    app.slave_entry.grid(row=0, column=3, padx=5)
+
+    ctk.CTkLabel(
+        app.brand_frame,
+        text="Modbus TCP: coils / holding registers",
+        text_color="gray",
+    ).grid(row=0, column=4, padx=20)

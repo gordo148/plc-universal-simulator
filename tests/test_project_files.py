@@ -35,3 +35,18 @@ def test_corrupted_project_is_rejected(tmp_path, monkeypatch):
     assert project_config.open_project(object()) is False
     assert errors
     assert "abrir projeto" in errors[0][0]
+
+
+def test_modbus_tcp_project_connection_settings_round_trip(project_app):
+    project_app.brand_menu.value = "Modbus TCP"
+    project_app.port_entry = type(project_app.ip_entry)("1502")
+    project_app.slave_entry = type(project_app.ip_entry)("7")
+
+    project = project_config.build_project_data(project_app)
+    staged = project_config._stage_project_data(project)
+
+    assert staged["plc"] == {
+        "brand": "Modbus TCP",
+        "ip": "192.168.1.10",
+        "settings": {"port": "1502", "slave_id": "7"},
+    }
