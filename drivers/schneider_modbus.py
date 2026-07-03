@@ -1,3 +1,6 @@
+import struct
+import inspect
+
 from pymodbus.client import ModbusTcpClient
 
 
@@ -18,11 +21,22 @@ class SchneiderModbusDriver:
     def is_connected(self):
         return self.client is not None and self.client.connected
 
+    def _request(self, method_name, *args, **kwargs):
+        method = getattr(self.client, method_name)
+        try:
+            parameters = inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+
+        unit_keyword = "device_id" if "device_id" in parameters else "slave"
+        kwargs[unit_keyword] = self.slave_id
+        return method(*args, **kwargs)
+
     def read_coils_block(self, start_address, count):
         if not self.is_connected():
             return None
 
-        rd = self.client.read_coils(start_address, count=count, slave=self.slave_id)
+        rd = self._request("read_coils", start_address, count=count)
 
         if rd.isError():
             return None
@@ -33,7 +47,11 @@ class SchneiderModbusDriver:
         if not self.is_connected():
             return None
 
-        rd = self.client.read_holding_registers(start_address, count=count, slave=self.slave_id)
+        rd = self._request(
+            "read_holding_registers",
+            start_address,
+            count=count,
+        )
 
         if rd.isError():
             return None
@@ -51,28 +69,61 @@ class SchneiderModbusDriver:
         if not self.is_connected():
             return None
 
-        wr = self.client.write_coil(coil_address, value, slave=self.slave_id)
+        wr = self._request("write_coil", coil_address, value)
         if wr.isError():
             return None
 
-        rd = self.client.read_coils(coil_address, count=1, slave=self.slave_id)
+        rd = self._request("read_coils", coil_address, count=1)
         if rd.isError():
             return None
 
         return bool(rd.bits[0])
 
-    def write_analog(self, register_address, value):
+    def write_analog(self, register_address, value, data_type="INT"):
         if not self.is_connected():
             return None
 
+        data_type = str(data_type).strip().upper()
+        if data_type == "REAL":
+            raw = struct.pack(">f", float(value))
+            registers = list(struct.unpack(">HH", raw))
+            wr = self._request(
+                "write_registers",
+                register_address,
+                registers,
+            )
+            if wr.isError():
+                return None
+
+            rd = self._request(
+                "read_holding_registers",
+                register_address,
+                count=2,
+            )
+            if rd.isError() or len(rd.registers) < 2:
+                return None
+
+            read_raw = struct.pack(
+                ">HH",
+                rd.registers[0] & 0xFFFF,
+                rd.registers[1] & 0xFFFF,
+            )
+            return struct.unpack(">f", read_raw)[0]
+
+        if data_type != "INT":
+            raise ValueError(f"Unsupported numeric type: {data_type}")
+
         value = int(value)
         value_to_write = value & 0xFFFF if value < 0 else value
-
-        wr = self.client.write_register(register_address, value_to_write, slave=self.slave_id)
+        wr = self._request("write_register", register_address, value_to_write)
         if wr.isError():
             return None
 
-        rd = self.client.read_holding_registers(register_address, count=1, slave=self.slave_id)
+        rd = self._request(
+            "read_holding_registers",
+            register_address,
+            count=1,
+        )
         if rd.isError():
             return None
 

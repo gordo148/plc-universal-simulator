@@ -140,7 +140,12 @@ class PLCService:
 
         try:
             address = self._numeric_address(target)
-            result = self._driver.write_analog(address, value)
+            data_type = (
+                target.data_type
+                if isinstance(target, TagDefinition)
+                else "INT"
+            )
+            result = self._driver.write_analog(address, value, data_type)
         except Exception:
             return None
 
@@ -181,7 +186,12 @@ class PLCService:
         if not parsed:
             return True
 
-        data = self._driver.read_data(maximum_end)
+        try:
+            data = self._driver.read_data(maximum_end)
+        except Exception:
+            for tag, _ in parsed:
+                self.runtime_cache.invalidate(tag.name)
+            return False
         if data is None:
             for tag, _ in parsed:
                 self.runtime_cache.invalidate(tag.name)
@@ -233,7 +243,12 @@ class PLCService:
     def _read_schneider_coils(self, tags) -> bool:
         start = min(address for _, address in tags)
         end = max(address for _, address in tags)
-        values = self._driver.read_coils_block(start, end - start + 1)
+        try:
+            values = self._driver.read_coils_block(start, end - start + 1)
+        except Exception:
+            for tag, _ in tags:
+                self.runtime_cache.invalidate(tag.name)
+            return False
 
         if values is None:
             for tag, _ in tags:
@@ -258,7 +273,12 @@ class PLCService:
             address + (2 if tag.data_type == "REAL" else 1)
             for tag, address in tags
         )
-        values = self._driver.read_registers_block(start, end - start)
+        try:
+            values = self._driver.read_registers_block(start, end - start)
+        except Exception:
+            for tag, _ in tags:
+                self.runtime_cache.invalidate(tag.name)
+            return False
 
         if values is None:
             for tag, _ in tags:

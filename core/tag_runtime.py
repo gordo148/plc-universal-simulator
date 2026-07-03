@@ -47,15 +47,20 @@ class RuntimeTagCache:
     def invalidate(self, name: str) -> None:
         runtime = self._values.setdefault(name, TagRuntime())
         runtime.valid = False
+        runtime.updated_at = time.time()
 
     def invalidate_all(self) -> None:
+        invalidated_at = time.time()
         for runtime in self._values.values():
             runtime.valid = False
+            runtime.updated_at = invalidated_at
 
     def invalidate_source(self, source: RuntimeValueSource) -> None:
+        invalidated_at = time.time()
         for runtime in self._values.values():
             if runtime.source == source:
                 runtime.valid = False
+                runtime.updated_at = invalidated_at
 
     def clear(self) -> None:
         """Discard all temporary runtime values."""

@@ -1,11 +1,10 @@
 import snap7
-from snap7.util import set_bool, set_int, get_bool, get_int
+from snap7.util import get_bool, get_int, get_real, set_bool, set_int, set_real
 
 
 class SiemensS7Driver:
     def __init__(self):
         self.client = snap7.client.Client()
-        self.data = bytearray(1000)
         self.db_number = 100
 
     def connect(self, ip, rack=0, slot=1, db_number=100):
@@ -29,26 +28,53 @@ class SiemensS7Driver:
         if not self.is_connected():
             return None
 
-        set_bool(self.data, byte_index, bit_index, value)
-        self.client.db_write(self.db_number, 0, self.data)
+        data = bytearray(
+            self.client.db_read(self.db_number, byte_index, 1)
+        )
+        if len(data) != 1:
+            return None
 
-        plc_data = self.client.db_read(self.db_number, 0, 1000)
-        real_value = get_bool(plc_data, byte_index, bit_index)
+        set_bool(data, 0, bit_index, bool(value))
+        self.client.db_write(self.db_number, byte_index, data)
 
-        set_bool(self.data, byte_index, bit_index, real_value)
-        return real_value
+        plc_data = bytearray(
+            self.client.db_read(self.db_number, byte_index, 1)
+        )
+        if len(plc_data) != 1:
+            return None
+        return get_bool(plc_data, 0, bit_index)
 
-    def write_analog(self, byte_index, value):
+    def write_analog(self, byte_index, value, data_type="INT"):
         if not self.is_connected():
             return None
 
-        value = max(-32768, min(32767, int(value)))
+        data_type = str(data_type).strip().upper()
+        if data_type == "INT":
+            size = 2
+        elif data_type == "REAL":
+            size = 4
+        else:
+            raise ValueError(f"Unsupported numeric type: {data_type}")
 
-        set_int(self.data, byte_index, value)
-        self.client.db_write(self.db_number, 0, self.data)
+        data = bytearray(
+            self.client.db_read(self.db_number, byte_index, size)
+        )
+        if len(data) != size:
+            return None
 
-        plc_data = self.client.db_read(self.db_number, 0, 1000)
-        real_value = get_int(plc_data, byte_index)
+        if data_type == "INT":
+            encoded_value = max(-32768, min(32767, int(value)))
+            set_int(data, 0, encoded_value)
+        else:
+            set_real(data, 0, float(value))
 
-        set_int(self.data, byte_index, real_value)
-        return real_value
+        self.client.db_write(self.db_number, byte_index, data)
+
+        plc_data = bytearray(
+            self.client.db_read(self.db_number, byte_index, size)
+        )
+        if len(plc_data) != size:
+            return None
+        if data_type == "INT":
+            return get_int(plc_data, 0)
+        return get_real(plc_data, 0)
