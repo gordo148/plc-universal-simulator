@@ -4,3 +4,4 @@ pymodbus
 pyinstaller
 matplotlib
 pillow
+pytest

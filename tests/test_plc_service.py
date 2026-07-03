@@ -1,0 +1,89 @@
+from unittest.mock import Mock
+
+from snap7.util import set_bool, set_int, set_real
+
+from core.tag_model import TagDefinition
+from core.tag_runtime import RuntimeTagCache
+from services.plc_service import PLCService
+
+
+def connected_driver():
+    driver = Mock()
+    driver.is_connected.return_value = True
+    return driver
+
+
+def test_siemens_read_routes_to_driver_and_decodes_values():
+    driver = connected_driver()
+    data = bytearray(24)
+    set_bool(data, 0, 0, True)
+    set_int(data, 10, -123)
+    set_real(data, 20, 12.5)
+    driver.read_data.return_value = data
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Run", "BOOL", "Input", "DBX0.0"),
+        TagDefinition("Count", "INT", "Input", "DBW10"),
+        TagDefinition("Level", "REAL", "Input", "DBD20"),
+    ]
+
+    assert service.read(tags, brand="Siemens")
+
+    driver.read_data.assert_called_once_with(24)
+    assert cache.get_value("Run") is True
+    assert cache.get_value("Count") == -123
+    assert cache.get_value("Level") == 12.5
+
+
+def test_schneider_read_routes_bool_int_and_real_to_mock_driver():
+    driver = connected_driver()
+    driver.read_coils_block.return_value = [True]
+    driver.read_registers_block.return_value = [42, 0x4148, 0x0000]
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Run", "BOOL", "Input", "%M0"),
+        TagDefinition("Count", "INT", "Input", "%MW10"),
+        TagDefinition("Level", "REAL", "Input", "%MW11"),
+    ]
+
+    assert service.read(tags, brand="Schneider")
+
+    driver.read_coils_block.assert_called_once_with(0, 1)
+    driver.read_registers_block.assert_called_once_with(10, 3)
+    assert cache.get_value("Run") is True
+    assert cache.get_value("Count") == 42
+    assert cache.get_value("Level") == 12.5
+
+
+def test_siemens_writes_route_by_tag_type():
+    driver = connected_driver()
+    driver.write_digital.return_value = True
+    driver.write_analog.return_value = 77
+    service = PLCService(driver)
+    service._brand = "Siemens"
+    bool_tag = TagDefinition("Run", "BOOL", "Output", "DBX2.3")
+    int_tag = TagDefinition("Speed", "INT", "Output", "DBW10")
+
+    assert service.write_bool(bool_tag, True) is True
+    assert service.write_numeric(int_tag, 77) == 77
+
+    driver.write_digital.assert_called_once_with(2, 3, True)
+    driver.write_analog.assert_called_once_with(10, 77, "INT")
+
+
+def test_schneider_writes_route_by_tag_type():
+    driver = connected_driver()
+    driver.write_digital.return_value = False
+    driver.write_analog.return_value = 3.5
+    service = PLCService(driver)
+    service._brand = "Schneider"
+    bool_tag = TagDefinition("Run", "BOOL", "Output", "%M5")
+    real_tag = TagDefinition("Speed", "REAL", "Output", "%MW20")
+
+    assert service.write_bool(bool_tag, False) is False
+    assert service.write_numeric(real_tag, 3.5) == 3.5
+
+    driver.write_digital.assert_called_once_with(5, False)
+    driver.write_analog.assert_called_once_with(20, 3.5, "REAL")
