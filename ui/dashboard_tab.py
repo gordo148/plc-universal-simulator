@@ -211,7 +211,7 @@ def create_digital_card(parent, tag, column, row):
 
     ctk.CTkLabel(
         card,
-        text=tag.name.upper(),
+        text=tag.name,
         font=("Arial", 11, "bold"),
         text_color="#dbeafe",
     ).pack(pady=(8, 1))
@@ -222,15 +222,88 @@ def create_digital_card(parent, tag, column, row):
         text_color=COLOR_MUTED,
     )
     state_label.pack(pady=1)
+    metadata = create_runtime_metadata(card, tag.address)
+
+    return {
+        "frame": card,
+        "value": state_label,
+        **metadata,
+    }
+
+
+def create_process_value_card(parent, tag, column, row):
+    card = ctk.CTkFrame(
+        parent,
+        corner_radius=10,
+        fg_color=COLOR_CARD,
+        border_width=2,
+        border_color=COLOR_CARD_BORDER,
+    )
+    card.grid(row=row, column=column, padx=8, pady=6, sticky="nsew")
+    parent.grid_columnconfigure(column, weight=1)
+
     ctk.CTkLabel(
         card,
-        text=tag.address,
+        text=tag.name,
+        font=("Arial", 12, "bold"),
+        text_color="#dbeafe",
+    ).pack(pady=(11, 2))
+    value_label = ctk.CTkLabel(
+        card,
+        text="---",
+        font=("Arial", 24, "bold"),
+        text_color=COLOR_MUTED,
+    )
+    value_label.pack(pady=(2, 0))
+    ctk.CTkLabel(
+        card,
+        text="UNIT: —",
+        font=("Arial", 10, "bold"),
+        text_color=COLOR_MUTED,
+    ).pack(pady=(0, 3))
+    metadata = create_runtime_metadata(card, tag.address)
+
+    return {
+        "frame": card,
+        "value": value_label,
+        **metadata,
+    }
+
+
+def create_runtime_metadata(card, address):
+    quality_label = ctk.CTkLabel(
+        card,
+        text="QUALITY: BAD",
+        font=("Arial", 10, "bold"),
+        text_color=COLOR_RED,
+    )
+    quality_label.pack(pady=(1, 0))
+    source_label = ctk.CTkLabel(
+        card,
+        text="SOURCE: —",
+        font=("Arial", 9, "bold"),
+        text_color=COLOR_MUTED,
+    )
+    source_label.pack(pady=0)
+    updated_label = ctk.CTkLabel(
+        card,
+        text="LAST: NEVER",
         font=("Arial", 9),
         text_color=COLOR_MUTED,
-    ).pack(pady=(1, 7))
+    )
+    updated_label.pack(pady=0)
+    ctk.CTkLabel(
+        card,
+        text=f"ADDRESS: {address}",
+        font=("Arial", 9),
+        text_color=COLOR_MUTED,
+    ).pack(pady=(0, 7))
 
-    state_label.card_frame = card
-    return state_label
+    return {
+        "quality": quality_label,
+        "source": source_label,
+        "updated": updated_label,
+    }
 
 
 def style_card(value_label, border_color):
@@ -289,14 +362,11 @@ def refresh_dashboard_tag_cards(app):
         )
     for index, tag in enumerate(numeric_tags):
         row, column = divmod(index, NUMERIC_COLUMNS)
-        app.dashboard_tag_cards[tag.name] = create_value_card(
+        app.dashboard_tag_cards[tag.name] = create_process_value_card(
             app.dashboard_numeric_frame,
-            tag.name.upper(),
-            "---",
-            COLOR_MUTED,
+            tag,
             column,
             row,
-            subtitle=f"{tag.data_type}  •  {tag.address}",
         )
 
     return dashboard_tags
@@ -343,28 +413,78 @@ def update_dashboard(app, last_message=None):
     style_card(app.card_alarm, alarm_color)
 
     for tag in refresh_dashboard_tag_cards(app):
-        label = app.dashboard_tag_cards[tag.name]
+        card = app.dashboard_tag_cards[tag.name]
         runtime = app.tag_runtime.get(tag.name)
-
-        if runtime is None or not runtime.valid:
-            text = "● ---" if tag.data_type == "BOOL" else "---"
-            color = COLOR_MUTED
-            border_color = COLOR_CARD_BORDER
-        elif tag.data_type == "BOOL":
-            state = bool(runtime.value)
-            text = "● ON" if state else "● OFF"
-            color = COLOR_GREEN if state else COLOR_MUTED
-            border_color = COLOR_GREEN if state else COLOR_CARD_BORDER
-        else:
-            text = str(runtime.value)
-            color = COLOR_CYAN
-            border_color = "#0e7490"
-
-        label.configure(text=text, text_color=color)
-        style_card(label, border_color)
+        update_runtime_card(card, tag.data_type, runtime)
 
     if last_message:
         record_dashboard_event(app, last_message)
+
+
+def update_runtime_card(card, data_type, runtime):
+    valid = runtime is not None and runtime.valid
+    source = runtime_source_name(runtime)
+    updated_at = runtime_timestamp(runtime)
+
+    if valid and data_type == "BOOL":
+        state = bool(runtime.value)
+        card["value"].configure(
+            text="● ON" if state else "● OFF",
+            text_color=COLOR_GREEN if state else "#dbeafe",
+        )
+    elif valid:
+        card["value"].configure(
+            text=str(runtime.value),
+            text_color=COLOR_CYAN,
+        )
+    else:
+        card["value"].configure(
+            text="● ---" if data_type == "BOOL" else "---",
+            text_color=COLOR_RED,
+        )
+
+    card["quality"].configure(
+        text="QUALITY: GOOD" if valid else "QUALITY: BAD",
+        text_color=COLOR_GREEN if valid else COLOR_RED,
+    )
+
+    if source == "SIMULATION":
+        source_color = COLOR_AMBER
+    elif source == "PLC":
+        source_color = COLOR_CYAN
+    else:
+        source_color = COLOR_MUTED
+    card["source"].configure(
+        text=f"SOURCE: {source}",
+        text_color=source_color,
+    )
+    card["updated"].configure(
+        text=f"LAST: {updated_at}",
+        text_color=COLOR_MUTED,
+    )
+
+    if not valid:
+        border_color = COLOR_RED
+    elif source == "SIMULATION":
+        border_color = COLOR_AMBER
+    else:
+        border_color = "#0e7490"
+    card["frame"].configure(border_color=border_color)
+
+
+def runtime_source_name(runtime):
+    if runtime is None or runtime.source is None:
+        return "—"
+    return str(getattr(runtime.source, "value", runtime.source)).upper()
+
+
+def runtime_timestamp(runtime):
+    if runtime is None or runtime.updated_at is None:
+        return "NEVER"
+    try:
+        return time.strftime("%H:%M:%S", time.localtime(runtime.updated_at))
+    except (OverflowError, OSError, TypeError, ValueError):
+        return "UNKNOWN"
 
 
 def record_dashboard_event(app, message):
