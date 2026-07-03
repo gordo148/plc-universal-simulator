@@ -15,6 +15,7 @@ from drivers.schneider_modbus import (
     SchneiderModbusDriver,
 )
 from drivers.modbus_tcp import ModbusTCPDriver
+from drivers.rockwell_enip import RockwellEtherNetIPDriver
 from drivers.siemens_s7 import SiemensS7Driver
 
 
@@ -56,6 +57,9 @@ class PLCService:
                 int(options.get("port", 502)),
                 int(options.get("slave_id", 1)),
             )
+        elif brand == "Rockwell":
+            driver = RockwellEtherNetIPDriver()
+            connect_args = (ip,)
         else:
             raise ValueError(f"Unsupported PLC brand: {brand}")
 
@@ -121,6 +125,8 @@ class PLCService:
             return self._scan_modbus(tags, _parse_schneider_address)
         if active_brand == "Modbus TCP":
             return self._scan_modbus(tags, _parse_modbus_tcp_address)
+        if active_brand == "Rockwell":
+            return self._scan_rockwell(tags)
         return False
 
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
@@ -131,6 +137,9 @@ class PLCService:
             if self._brand == "Siemens":
                 byte_index, bit_index = _parse_siemens_address(tag)
                 result = self._driver.write_digital(byte_index, bit_index, bool(value))
+            elif self._brand == "Rockwell":
+                tag_name = _parse_rockwell_address(tag)
+                result = self._driver.write_tag(tag_name, bool(value))
             else:
                 address = self._parse_modbus_address(tag)
                 result = self._driver.write_digital(address, bool(value))
@@ -156,13 +165,26 @@ class PLCService:
             return None
 
         try:
-            address = self._numeric_address(target)
             data_type = (
                 target.data_type
                 if isinstance(target, TagDefinition)
                 else "INT"
             )
-            result = self._driver.write_analog(address, value, data_type)
+            if self._brand == "Rockwell":
+                tag_name = (
+                    target.address
+                    if isinstance(target, TagDefinition)
+                    else str(target).strip()
+                )
+                if isinstance(target, TagDefinition):
+                    tag_name = _parse_rockwell_address(target)
+                typed_value = (
+                    float(value) if data_type == "REAL" else int(value)
+                )
+                result = self._driver.write_tag(tag_name, typed_value)
+            else:
+                address = self._numeric_address(target)
+                result = self._driver.write_analog(address, value, data_type)
         except Exception:
             LOGGER.exception("PLC numeric write failed for target %s", target)
             return None
@@ -262,6 +284,55 @@ class PLCService:
             success = self._read_schneider_coils(coils) and success
         if registers:
             success = self._read_schneider_registers(registers) and success
+        return success
+
+    def _scan_rockwell(self, tags: list[TagDefinition]) -> bool:
+        supported = [
+            tag for tag in tags
+            if tag.data_type in ("BOOL", "INT", "REAL")
+            and re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*",
+                str(tag.address).strip(),
+            )
+        ]
+        for tag in tags:
+            if tag not in supported:
+                self.runtime_cache.invalidate(tag.name)
+
+        if not supported:
+            return True
+
+        try:
+            values = self._driver.read_tags(
+                [tag.address for tag in supported]
+            )
+        except Exception:
+            LOGGER.exception("Rockwell symbolic-tag read failed")
+            for tag in supported:
+                self.runtime_cache.invalidate(tag.name)
+            return False
+
+        success = True
+        for tag in supported:
+            if tag.address not in values:
+                self.runtime_cache.invalidate(tag.name)
+                success = False
+                continue
+            try:
+                if tag.data_type == "BOOL":
+                    value = bool(values[tag.address])
+                elif tag.data_type == "INT":
+                    value = int(values[tag.address])
+                else:
+                    value = round(float(values[tag.address]), 3)
+                self.runtime_cache.update(
+                    tag.name,
+                    value,
+                    RuntimeValueSource.PLC,
+                )
+            except (TypeError, ValueError):
+                self.runtime_cache.invalidate(tag.name)
+                success = False
         return success
 
     def _read_schneider_coils(self, tags) -> bool:
@@ -430,3 +501,12 @@ def _parse_modbus_tcp_address(tag: TagDefinition) -> int:
     if match is None:
         raise ValueError("Invalid Modbus TCP address")
     return int(match.group(1))
+
+
+def _parse_rockwell_address(tag: TagDefinition) -> str:
+    if tag.data_type not in ("BOOL", "INT", "REAL"):
+        raise ValueError("Unsupported tag type")
+    address = str(tag.address).strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", address) is None:
+        raise ValueError("Invalid Rockwell symbolic tag name")
+    return address

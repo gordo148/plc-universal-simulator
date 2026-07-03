@@ -94,3 +94,32 @@ def test_generic_modbus_suggestions_account_for_plain_addresses_and_real_size():
     assert suggest_address("Modbus TCP", "BOOL", tags) == "%M1"
     assert suggest_address("Modbus TCP", "INT", tags) == "%MW3"
     assert suggest_address("Modbus TCP", "REAL", tags) == "%MW3"
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["Start_Button", "Tank_Level", "PID_OUT", "Motor_Run"],
+)
+@pytest.mark.parametrize("data_type", ["BOOL", "INT", "REAL"])
+def test_valid_rockwell_symbolic_addresses(data_type, address):
+    assert validate_tag_address("Rockwell", data_type, address)[0]
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["", "123Tag", "Tank Level", "DBX0.0", "%M0", "Motor-Run"],
+)
+def test_invalid_rockwell_symbolic_addresses(address):
+    assert not validate_tag_address("Rockwell", "BOOL", address)[0]
+
+
+def test_rockwell_suggestion_uses_tag_manager_name_and_avoids_duplicates():
+    tags = [TagDefinition("Existing", "BOOL", "Input", "Motor_Run")]
+
+    assert suggest_address(
+        "Rockwell",
+        "BOOL",
+        tags,
+        "Motor Run",
+    ) == "Motor_Run_2"
+    assert suggest_address("Rockwell", "REAL", [], "Tank Level") == "Tank_Level"

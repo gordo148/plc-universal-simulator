@@ -133,13 +133,15 @@ class PLCSimulator:
                     slot=self.slot_entry.get(),
                     db_number=self.db_entry.get(),
                 )
-            else:
+            elif brand in ("Schneider", "Modbus TCP"):
                 result = self.plc_service.connect(
                     brand,
                     ip,
                     port=self.port_entry.get(),
                     slave_id=self.slave_entry.get(),
                 )
+            else:
+                result = self.plc_service.connect(brand, ip)
 
             if result:
                 self.status_label.configure(text="● LIGADO", text_color="lime")
@@ -183,8 +185,11 @@ class PLCSimulator:
             self.create_siemens_options()
         elif value == "Schneider":
             self.create_schneider_options()
-        else:
+        elif value == "Modbus TCP":
             self.create_modbus_options()
+        else:
+            self.create_rockwell_options()
+            update_tag_address_context(self)
 
         self.generate_signals()
 

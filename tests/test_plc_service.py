@@ -162,3 +162,92 @@ def test_generic_modbus_offline_read_never_calls_driver():
     assert service.read([tag], brand="Modbus TCP") is False
     assert cache.get("Run").valid is False
     driver.read_coils_block.assert_not_called()
+
+
+def test_rockwell_connect_uses_ip_only_driver(monkeypatch):
+    driver = Mock()
+    driver.connect.return_value = True
+    driver_type = Mock(return_value=driver)
+    monkeypatch.setattr(plc_service, "RockwellEtherNetIPDriver", driver_type)
+    service = PLCService()
+
+    assert service.connect("Rockwell", "192.0.2.20")
+
+    driver_type.assert_called_once_with()
+    driver.connect.assert_called_once_with("192.0.2.20")
+    assert service._brand == "Rockwell"
+
+
+def test_rockwell_read_routes_symbolic_tags_and_updates_runtime_cache():
+    driver = connected_driver()
+    driver.read_tags.return_value = {
+        "Start_Button": True,
+        "Batch_Count": 12,
+        "Tank_Level": 8.1254,
+    }
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Start", "BOOL", "Input", "Start_Button"),
+        TagDefinition("Count", "INT", "Input", "Batch_Count"),
+        TagDefinition("Level", "REAL", "Input", "Tank_Level"),
+    ]
+
+    assert service.read(tags, brand="Rockwell")
+
+    driver.read_tags.assert_called_once_with(
+        ["Start_Button", "Batch_Count", "Tank_Level"]
+    )
+    assert cache.get_value("Start") is True
+    assert cache.get_value("Count") == 12
+    assert cache.get_value("Level") == 8.125
+
+
+def test_rockwell_writes_route_symbolic_bool_int_and_real_values():
+    driver = connected_driver()
+    driver.write_tag.side_effect = [True, 21, 4.5]
+    service = PLCService(driver)
+    service._brand = "Rockwell"
+    bool_tag = TagDefinition("Start", "BOOL", "Output", "Start_Button")
+    int_tag = TagDefinition("Count", "INT", "Output", "Batch_Count")
+    real_tag = TagDefinition("Output", "REAL", "Output", "PID_OUT")
+
+    assert service.write_bool(bool_tag, True) is True
+    assert service.write_numeric(int_tag, 21.9) == 21
+    assert service.write_numeric(real_tag, 4.5) == 4.5
+
+    assert driver.write_tag.call_args_list == [
+        (("Start_Button", True), {}),
+        (("Batch_Count", 21), {}),
+        (("PID_OUT", 4.5), {}),
+    ]
+
+
+def test_rockwell_failed_read_marks_quality_bad_and_preserves_last_value():
+    driver = connected_driver()
+    driver.read_tags.side_effect = [
+        {"Tank_Level": 10.0},
+        {},
+    ]
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tag = TagDefinition("Level", "REAL", "Input", "Tank_Level")
+
+    assert service.read([tag], brand="Rockwell")
+    assert service.read([tag], brand="Rockwell") is False
+
+    runtime = cache.get("Level")
+    assert runtime.valid is False
+    assert runtime.value == 10.0
+
+
+def test_rockwell_offline_read_does_not_call_driver():
+    driver = Mock()
+    driver.is_connected.return_value = False
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tag = TagDefinition("Start", "BOOL", "Input", "Start_Button")
+
+    assert service.read([tag], brand="Rockwell") is False
+    assert cache.get("Start").valid is False
+    driver.read_tags.assert_not_called()

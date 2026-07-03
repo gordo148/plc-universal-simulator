@@ -1,6 +1,7 @@
 customtkinter
 python-snap7
 pymodbus
+pycomm3
 pyinstaller
 matplotlib
 pillow

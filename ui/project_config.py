@@ -18,7 +18,7 @@ from ui.tag_manager import (
 PROJECT_EXTENSION = ".simproject"
 PROJECT_FORMAT = "plc-universal-simulator-project"
 PROJECT_VERSION = 1
-SUPPORTED_BRANDS = ("Siemens", "Schneider", "Modbus TCP")
+SUPPORTED_BRANDS = ("Siemens", "Schneider", "Modbus TCP", "Rockwell")
 
 
 def new_project(app):
@@ -112,7 +112,7 @@ def build_project_data(app):
             "coil_start": app.coil_start_entry.get(),
             "register_start": app.reg_start_entry.get(),
         }
-    else:
+    elif brand == "Modbus TCP":
         connection["settings"] = {
             "port": app.port_entry.get(),
             "slave_id": app.slave_entry.get(),
@@ -262,8 +262,10 @@ def _apply_project_data(app, project, show_error=True):
             app.create_siemens_options()
         elif brand == "Schneider":
             app.create_schneider_options()
-        else:
+        elif brand == "Modbus TCP":
             app.create_modbus_options()
+        else:
+            app.create_rockwell_options()
 
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
         _restore_connection_settings(app, brand, plc.get("settings", {}))
@@ -314,6 +316,9 @@ def _restore_connection_settings(app, brand, settings):
     if brand == "Modbus TCP":
         _set_entry(app.port_entry, settings.get("port", "502"))
         _set_entry(app.slave_entry, settings.get("slave_id", "1"))
+        return
+
+    if brand == "Rockwell":
         return
 
     model = settings.get("model", "M221")
@@ -482,7 +487,9 @@ def _stage_project_data(project):
             raise ValueError(f"Tag {index}: direção inválida {tag.direction}")
         if not isinstance(tag.address, str) or not tag.address.strip():
             raise ValueError(f"Tag {index}: endereço vazio")
-        tag.address = tag.address.strip().upper()
+        tag.address = tag.address.strip()
+        if brand != "Rockwell":
+            tag.address = tag.address.upper()
         tags.append(tag)
 
     names_valid, names_message = normalize_and_validate_tag_names(tags)

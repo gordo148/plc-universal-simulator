@@ -72,3 +72,15 @@ def test_invalid_csv_does_not_partially_replace_tags(tmp_path, monkeypatch):
     assert app.tags is original
     assert [tag.name for tag in app.tags] == ["Existing"]
     assert errors
+
+
+def test_rockwell_csv_preserves_symbolic_tag_case(tmp_path):
+    path = tmp_path / "rockwell.csv"
+    path.write_text(
+        CSV_HEADER + "Tank,REAL,Input,Tank_Level,1,1,0,0\n",
+        encoding="utf-8",
+    )
+
+    tags = tag_manager.read_tags_csv(path, "Rockwell")
+
+    assert tags[0].address == "Tank_Level"

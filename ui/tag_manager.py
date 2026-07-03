@@ -194,7 +194,9 @@ def add_tag(app):
         return
 
     data_type = app.tag_type_menu.get()
-    address = app.tag_address_entry.get().strip().upper()
+    address = app.tag_address_entry.get().strip()
+    if app.brand_menu.get() != "Rockwell":
+        address = address.upper()
     valid, validation_message = validate_tag_address(
         app.brand_menu.get(),
         data_type,
@@ -273,6 +275,14 @@ def validate_tag_address(brand, data_type, address):
                 "REAL Modbus TCP requer %MW0, MW0 ou 0 e ocupa 2 registos",
             ),
         }
+    elif brand == "Rockwell":
+        patterns = {
+            data_type: (
+                r"[A-Z_][A-Z0-9_]*",
+                "Rockwell requer um nome de tag simbólico (ex.: Start_Button)",
+            )
+            for data_type in ("BOOL", "INT", "REAL")
+        }
     else:
         return False, f"Marca PLC não suportada: {brand}"
 
@@ -294,6 +304,7 @@ def suggest_tag_address(app):
         app.brand_menu.get(),
         app.tag_type_menu.get(),
         app.tags,
+        app.tag_name_entry.get(),
     )
     app.tag_address_entry.delete(0, "end")
     app.tag_address_entry.insert(0, address)
@@ -353,7 +364,7 @@ def update_tag_address_context(app):
         validate_current_tag_address(app)
 
 
-def suggest_address(brand, data_type, tags):
+def suggest_address(brand, data_type, tags, tag_name=None):
     brand = str(brand).strip()
     data_type = str(data_type).strip().upper()
     if data_type not in ["BOOL", "INT", "REAL"]:
@@ -400,6 +411,29 @@ def suggest_address(brand, data_type, tags):
         ):
             candidate += 1
         return f"%MW{candidate}"
+
+    if brand == "Rockwell":
+        candidate = re.sub(r"[^A-Za-z0-9_]", "_", str(tag_name or "").strip())
+        if not candidate:
+            candidate = f"Tag_{data_type}"
+        if not re.match(r"[A-Za-z_]", candidate):
+            candidate = f"_{candidate}"
+
+        occupied = {
+            str(tag.address).strip().casefold()
+            for tag in tags
+            if validate_tag_address(
+                "Rockwell",
+                tag.data_type,
+                tag.address,
+            )[0]
+        }
+        suggestion = candidate
+        suffix = 2
+        while suggestion.casefold() in occupied:
+            suggestion = f"{candidate}_{suffix}"
+            suffix += 1
+        return suggestion
 
     raise ValueError(f"Marca PLC não suportada: {brand}")
 
@@ -515,7 +549,9 @@ def read_tags_csv(file_path, brand=None):
                 if not values["name"]:
                     raise ValueError("name vazio")
 
-                address = values["address"].upper()
+                address = values["address"]
+                if brand != "Rockwell":
+                    address = address.upper()
                 if brand is not None:
                     valid, validation_message = validate_tag_address(
                         brand,

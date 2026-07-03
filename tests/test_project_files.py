@@ -50,3 +50,22 @@ def test_modbus_tcp_project_connection_settings_round_trip(project_app):
         "ip": "192.168.1.10",
         "settings": {"port": "1502", "slave_id": "7"},
     }
+
+
+def test_rockwell_project_requires_only_ip(project_app):
+    project_app.brand_menu.value = "Rockwell"
+    project_app.tags[0].address = "Start_Button"
+    project_app.tags[1].address = "Tank_Level"
+
+    project = project_config.build_project_data(project_app)
+    staged = project_config._stage_project_data(project)
+
+    assert staged["plc"] == {
+        "brand": "Rockwell",
+        "ip": "192.168.1.10",
+        "settings": {},
+    }
+    assert [tag["address"] for tag in staged["tags"]] == [
+        "Start_Button",
+        "Tank_Level",
+    ]

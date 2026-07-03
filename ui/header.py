@@ -58,7 +58,7 @@ def create_header(app):
     ctk.CTkLabel(app.header, text="Marca").grid(row=0, column=0, padx=5)
     app.brand_menu = ctk.CTkOptionMenu(
         app.header,
-        values=["Siemens", "Schneider", "Modbus TCP"],
+        values=["Siemens", "Schneider", "Modbus TCP", "Rockwell"],
         command=app.update_brand
     )
     app.brand_menu.set("Siemens")
@@ -102,6 +102,7 @@ def create_header(app):
     app.create_siemens_options = lambda: create_siemens_options(app)
     app.create_schneider_options = lambda: create_schneider_options(app)
     app.create_modbus_options = lambda: create_modbus_options(app)
+    app.create_rockwell_options = lambda: create_rockwell_options(app)
     app.create_siemens_options()
     update_top_status_bar(app)
     app.app.after(
@@ -305,3 +306,12 @@ def create_modbus_options(app):
         text="Modbus TCP: coils / holding registers",
         text_color="gray",
     ).grid(row=0, column=4, padx=20)
+
+
+def create_rockwell_options(app):
+    clear_brand_frame(app)
+    ctk.CTkLabel(
+        app.brand_frame,
+        text="Rockwell EtherNet/IP — symbolic tags",
+        text_color="gray",
+    ).grid(row=0, column=0, padx=20)
