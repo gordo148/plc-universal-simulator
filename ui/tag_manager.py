@@ -116,6 +116,13 @@ def create_tag_manager_tab(app):
 
     ctk.CTkButton(
         controls,
+        text="Import Schneider CSV",
+        command=lambda: import_schneider_csv(app),
+        width=155,
+    ).pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        controls,
         text="Export CSV",
         command=lambda: export_tags_csv(app),
         width=110,
@@ -493,19 +500,19 @@ def read_tia_tags_csv(file_path):
             raise ValueError("CSV TIA sem cabeçalho")
 
         header_map = {
-            _normalize_tia_header(header): header
+            _normalize_import_header(header): header
             for header in reader.fieldnames
         }
-        name_column = _find_tia_column(header_map, ["name"])
-        type_column = _find_tia_column(
+        name_column = _find_import_column(header_map, ["name"])
+        type_column = _find_import_column(
             header_map,
             ["data type", "datatype"],
         )
-        logical_address_column = _find_tia_column(
+        logical_address_column = _find_import_column(
             header_map,
             ["logical address"],
         )
-        address_column = _find_tia_column(header_map, ["address"])
+        address_column = _find_import_column(header_map, ["address"])
 
         missing = []
         if name_column is None:
@@ -573,7 +580,7 @@ def read_tia_tags_csv(file_path):
     return tags
 
 
-def _normalize_tia_header(header):
+def _normalize_import_header(header):
     return re.sub(
         r"[\s_]+",
         " ",
@@ -581,11 +588,125 @@ def _normalize_tia_header(header):
     )
 
 
-def _find_tia_column(header_map, candidates):
+def _find_import_column(header_map, candidates):
     for candidate in candidates:
         if candidate in header_map:
             return header_map[candidate]
     return None
+
+
+def _find_import_columns(header_map, candidates):
+    return [
+        header_map[candidate]
+        for candidate in candidates
+        if candidate in header_map
+    ]
+
+
+def _first_import_value(row, columns):
+    for column in columns:
+        value = str(row.get(column, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+# Compatibility for callers using the Phase 7B helper names.
+_normalize_tia_header = _normalize_import_header
+_find_tia_column = _find_import_column
+
+
+def read_schneider_tags_csv(file_path):
+    tags = []
+
+    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+        sample = file.read(4096)
+        file.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+
+        reader = csv.DictReader(file, dialect=dialect)
+        if reader.fieldnames is None:
+            raise ValueError("CSV Schneider sem cabeçalho")
+
+        header_map = {
+            _normalize_import_header(header): header
+            for header in reader.fieldnames
+        }
+        name_columns = _find_import_columns(
+            header_map,
+            ["name", "variable"],
+        )
+        type_columns = _find_import_columns(
+            header_map,
+            ["data type", "datatype", "type"],
+        )
+        address_column = _find_import_column(header_map, ["address"])
+
+        missing = []
+        if not name_columns:
+            missing.append("Name/Variable")
+        if not type_columns:
+            missing.append("Type/Data Type")
+        if address_column is None:
+            missing.append("Address")
+        if missing:
+            raise ValueError(
+                "colunas Schneider em falta: " + ", ".join(missing)
+            )
+
+        type_map = {
+            "ebool": "BOOL",
+            "bool": "BOOL",
+            "int": "INT",
+            "real": "REAL",
+        }
+
+        for line_number, row in enumerate(reader, start=2):
+            if not any(str(value or "").strip() for value in row.values()):
+                continue
+
+            try:
+                name = _first_import_value(row, name_columns)
+                schneider_type = _first_import_value(row, type_columns)
+                address = str(
+                    row.get(address_column, "") or ""
+                ).strip().upper()
+
+                if not name:
+                    raise ValueError("Name/Variable vazio")
+
+                data_type = type_map.get(schneider_type.lower())
+                if data_type is None:
+                    raise ValueError(
+                        "Type Schneider não suportado: "
+                        f"{schneider_type}"
+                    )
+
+                valid, message = validate_tag_address(
+                    "Schneider",
+                    data_type,
+                    address,
+                )
+                if not valid:
+                    raise ValueError(message)
+
+                tags.append(Tag(
+                    name=name,
+                    data_type=data_type,
+                    direction="Input",
+                    address=address,
+                    enabled_sim=True,
+                    enabled_trend=False,
+                    enabled_alarm=False,
+                    enabled_dashboard=True,
+                ))
+            except ValueError as error:
+                raise ValueError(f"linha {line_number}: {error}") from error
+
+    return tags
 
 
 def import_tags_csv(app):
@@ -632,16 +753,66 @@ def import_tia_csv(app):
     )
 
 
-def apply_imported_tags(app, imported_tags, error_title, success_text):
+def import_schneider_csv(app):
+    file_path = filedialog.askopenfilename(
+        initialdir="configs",
+        filetypes=[
+            ("Schneider CSV files", "*.csv"),
+            ("All files", "*.*"),
+        ],
+    )
+    if not file_path:
+        return
+
+    try:
+        imported_tags = read_schneider_tags_csv(file_path)
+    except (OSError, ValueError) as error:
+        messagebox.showerror("Erro Import Schneider CSV", str(error))
+        return
+
+    apply_imported_tags(
+        app,
+        imported_tags,
+        "Erro Import Schneider CSV",
+        f"● {len(imported_tags)} TAGS SCHNEIDER IMPORTADAS",
+        target_brand="Schneider",
+    )
+
+
+def apply_imported_tags(
+    app,
+    imported_tags,
+    error_title,
+    success_text,
+    target_brand=None,
+):
     previous_tags = app.tags
+    previous_brand = None
+    brand_changed = False
+    if (
+        target_brand is not None
+        and hasattr(app, "brand_menu")
+        and hasattr(app, "update_brand")
+    ):
+        previous_brand = app.brand_menu.get()
+        brand_changed = previous_brand != target_brand
+
     try:
         app.tags = imported_tags
         refresh_tag_table(app)
-        app.generate_signals()
+        if brand_changed:
+            app.brand_menu.set(target_brand)
+            app.update_brand(target_brand)
+        else:
+            app.generate_signals()
     except Exception as error:
         app.tags = previous_tags
         refresh_tag_table(app)
-        app.generate_signals()
+        if brand_changed:
+            app.brand_menu.set(previous_brand)
+            app.update_brand(previous_brand)
+        else:
+            app.generate_signals()
         messagebox.showerror(error_title, str(error))
         return False
 
