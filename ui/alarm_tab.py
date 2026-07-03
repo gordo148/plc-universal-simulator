@@ -2,6 +2,7 @@ import time
 import customtkinter as ctk
 
 from ui.header import update_top_status_bar
+from ui.dashboard_tab import record_dashboard_event
 from ui.tag_manager import get_alarm_tags
 
 
@@ -164,6 +165,10 @@ def create_alarm_row(app, alarm):
 
 def acknowledge_alarm(app, alarm):
     alarm["ack"] = True
+    record_dashboard_event(
+        app,
+        f"Alarm acknowledged: {alarm['source']} {alarm['type']}",
+    )
     update_alarm_table(app)
     update_alarm_status(app)
 
@@ -220,6 +225,15 @@ def scan_alarms(app):
         if alarm["active"] and not was_active:
             alarm["timestamp"] = time.strftime("%H:%M:%S")
             alarm["ack"] = False
+            record_dashboard_event(
+                app,
+                f"Alarm active: {alarm['source']} {alarm['type']}",
+            )
+        elif was_active and not alarm["active"]:
+            record_dashboard_event(
+                app,
+                f"Alarm normal: {alarm['source']} {alarm['type']}",
+            )
 
     update_alarm_table(app)
     update_alarm_status(app)

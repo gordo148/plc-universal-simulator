@@ -1,10 +1,14 @@
+import time
+
 import customtkinter as ctk
 
 from ui.tag_manager import get_dashboard_tags
 
 
 DASHBOARD_REFRESH_MS = 500
-TAG_COLUMNS = 4
+DIGITAL_COLUMNS = 6
+NUMERIC_COLUMNS = 4
+EVENT_LIMIT = 100
 COLOR_DASHBOARD = "#0f1720"
 COLOR_CARD = "#182431"
 COLOR_CARD_BORDER = "#334155"
@@ -16,6 +20,7 @@ COLOR_AMBER = "#f59e0b"
 
 
 def create_dashboard_tab(app):
+    app.dashboard_events = []
     app.dashboard_frame = ctk.CTkFrame(
         app.tab_dashboard,
         fg_color=COLOR_DASHBOARD,
@@ -23,69 +28,108 @@ def create_dashboard_tab(app):
     )
     app.dashboard_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-    title = ctk.CTkLabel(
+    ctk.CTkLabel(
         app.dashboard_frame,
         text="OPERATIONS OVERVIEW",
         font=("Arial", 26, "bold"),
         text_color="#dbeafe",
-    )
-    title.pack(pady=(18, 2))
-
+    ).pack(pady=(16, 2))
     ctk.CTkLabel(
         app.dashboard_frame,
         text="LIVE PROCESS STATUS  •  RUNTIME TAG MONITOR",
         font=("Arial", 11, "bold"),
         text_color=COLOR_MUTED,
-    ).pack(pady=(0, 12))
+    ).pack(pady=(0, 10))
 
-    system_frame = ctk.CTkFrame(app.dashboard_frame, fg_color="transparent")
-    system_frame.pack(fill="x", padx=20, pady=(10, 5))
-
-    app.card_connection = create_card(
-        system_frame, "COMMUNICATION", "● OFFLINE", COLOR_RED, 0,
-        accent=COLOR_RED,
+    create_section_title(app.dashboard_frame, "CONTROL / PID")
+    control_frame = ctk.CTkFrame(
+        app.dashboard_frame,
+        fg_color="transparent",
     )
-    app.card_alarm = create_card(
-        system_frame, "ALARMS", "NORMAL", COLOR_GREEN, 1,
+    control_frame.pack(fill="x", padx=20, pady=(0, 5))
+    app.card_alarm = create_value_card(
+        control_frame,
+        "ALARM SUMMARY",
+        "NORMAL",
+        COLOR_GREEN,
+        0,
         accent=COLOR_GREEN,
     )
-    app.card_pid = create_card(
-        system_frame, "PID CONTROLLER", "OFF", COLOR_MUTED, 2,
-    )
-    app.card_brand = create_card(
-        system_frame, "PLC PLATFORM", "Siemens", "white", 3,
-    )
-    app.card_ip = create_card(
-        system_frame, "TARGET IP", "192.168.1.10", "white", 4,
-    )
-
-    activity_frame = ctk.CTkFrame(app.dashboard_frame, fg_color="transparent")
-    activity_frame.pack(fill="x", padx=20, pady=5)
-    app.card_last = create_card(
-        activity_frame,
-        "EVENT LOG",
-        "Waiting for activity...",
+    app.card_pid = create_value_card(
+        control_frame,
+        "PID CONTROLLER",
+        "OFF",
         COLOR_MUTED,
-        0,
-        accent="#3b82f6",
+        1,
     )
-
-    ctk.CTkLabel(
-        app.dashboard_frame,
-        text="PROCESS TAGS",
-        font=("Arial", 20, "bold"),
-        text_color="#dbeafe",
-    ).pack(anchor="w", padx=25, pady=(15, 5))
 
     app.dashboard_tags_frame = ctk.CTkScrollableFrame(
         app.dashboard_frame,
         fg_color="#111c27",
         corner_radius=10,
     )
-    app.dashboard_tags_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+    app.dashboard_tags_frame.pack(
+        fill="both",
+        expand=True,
+        padx=20,
+        pady=(5, 8),
+    )
+
+    create_section_title(
+        app.dashboard_tags_frame,
+        "DIGITAL STATUS",
+        use_grid=True,
+        row=0,
+    )
+    app.dashboard_digital_frame = ctk.CTkFrame(
+        app.dashboard_tags_frame,
+        fg_color="transparent",
+    )
+    app.dashboard_digital_frame.grid(
+        row=1,
+        column=0,
+        sticky="ew",
+        padx=8,
+        pady=(0, 8),
+    )
+
+    create_section_title(
+        app.dashboard_tags_frame,
+        "PROCESS VALUES",
+        use_grid=True,
+        row=2,
+    )
+    app.dashboard_numeric_frame = ctk.CTkFrame(
+        app.dashboard_tags_frame,
+        fg_color="transparent",
+    )
+    app.dashboard_numeric_frame.grid(
+        row=3,
+        column=0,
+        sticky="ew",
+        padx=8,
+        pady=(0, 8),
+    )
+    app.dashboard_tags_frame.grid_columnconfigure(0, weight=1)
     app.dashboard_tag_cards = {}
     app.dashboard_tag_signature = None
 
+    create_section_title(app.dashboard_frame, "EVENT LOG")
+    app.dashboard_event_log = ctk.CTkTextbox(
+        app.dashboard_frame,
+        height=105,
+        corner_radius=8,
+        fg_color="#0b131c",
+        border_width=1,
+        border_color=COLOR_CARD_BORDER,
+        text_color="#cbd5e1",
+        font=("Consolas", 12),
+        activate_scrollbars=True,
+    )
+    app.dashboard_event_log.pack(fill="x", padx=20, pady=(0, 16))
+    app.dashboard_event_log.configure(state="disabled")
+
+    record_dashboard_event(app, "Dashboard ready")
     update_dashboard(app)
     app.app.after(
         DASHBOARD_REFRESH_MS,
@@ -93,7 +137,22 @@ def create_dashboard_tab(app):
     )
 
 
-def create_card(
+def create_section_title(parent, text, use_grid=False, row=0):
+    label = ctk.CTkLabel(
+        parent,
+        text=text,
+        font=("Arial", 14, "bold"),
+        text_color="#dbeafe",
+        anchor="w",
+    )
+    if use_grid:
+        label.grid(row=row, column=0, sticky="ew", padx=12, pady=(10, 4))
+    else:
+        label.pack(fill="x", padx=24, pady=(8, 3))
+    return label
+
+
+def create_value_card(
     parent,
     title,
     value,
@@ -110,8 +169,7 @@ def create_card(
         border_width=2,
         border_color=accent,
     )
-    card.grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
-
+    card.grid(row=row, column=column, padx=8, pady=6, sticky="nsew")
     parent.grid_columnconfigure(column, weight=1)
 
     ctk.CTkLabel(
@@ -119,15 +177,14 @@ def create_card(
         text=title,
         font=("Arial", 12, "bold"),
         text_color=COLOR_MUTED,
-    ).pack(pady=(14, 3))
-
+    ).pack(pady=(12, 2))
     value_label = ctk.CTkLabel(
         card,
         text=value,
         font=("Arial", 22, "bold"),
         text_color=color,
     )
-    value_label.pack(pady=(3, 4 if subtitle else 14))
+    value_label.pack(pady=(2, 3 if subtitle else 12))
 
     if subtitle:
         ctk.CTkLabel(
@@ -135,11 +192,45 @@ def create_card(
             text=subtitle,
             font=("Arial", 10),
             text_color=COLOR_MUTED,
-        ).pack(pady=(0, 10))
+        ).pack(pady=(0, 9))
 
     value_label.card_frame = card
-
     return value_label
+
+
+def create_digital_card(parent, tag, column, row):
+    card = ctk.CTkFrame(
+        parent,
+        corner_radius=8,
+        fg_color=COLOR_CARD,
+        border_width=1,
+        border_color=COLOR_CARD_BORDER,
+    )
+    card.grid(row=row, column=column, padx=5, pady=5, sticky="nsew")
+    parent.grid_columnconfigure(column, weight=1)
+
+    ctk.CTkLabel(
+        card,
+        text=tag.name.upper(),
+        font=("Arial", 11, "bold"),
+        text_color="#dbeafe",
+    ).pack(pady=(8, 1))
+    state_label = ctk.CTkLabel(
+        card,
+        text="● ---",
+        font=("Arial", 16, "bold"),
+        text_color=COLOR_MUTED,
+    )
+    state_label.pack(pady=1)
+    ctk.CTkLabel(
+        card,
+        text=tag.address,
+        font=("Arial", 9),
+        text_color=COLOR_MUTED,
+    ).pack(pady=(1, 7))
+
+    state_label.card_frame = card
+    return state_label
 
 
 def style_card(value_label, border_color):
@@ -165,50 +256,64 @@ def refresh_dashboard_tag_cards(app):
     if signature == app.dashboard_tag_signature:
         return dashboard_tags
 
-    for widget in app.dashboard_tags_frame.winfo_children():
-        widget.destroy()
+    for frame in (app.dashboard_digital_frame, app.dashboard_numeric_frame):
+        for widget in frame.winfo_children():
+            widget.destroy()
 
     app.dashboard_tag_cards.clear()
     app.dashboard_tag_signature = signature
 
-    if not dashboard_tags:
-        ctk.CTkLabel(
-            app.dashboard_tags_frame,
-            text="Nenhuma tag habilitada para o Dashboard",
-            text_color="gray",
-        ).grid(row=0, column=0, padx=15, pady=20, sticky="w")
-        return dashboard_tags
+    bool_tags = [tag for tag in dashboard_tags if tag.data_type == "BOOL"]
+    numeric_tags = [
+        tag for tag in dashboard_tags if tag.data_type in ("INT", "REAL")
+    ]
 
-    for index, tag in enumerate(dashboard_tags):
-        row, column = divmod(index, TAG_COLUMNS)
-        initial_value = "● ---" if tag.data_type == "BOOL" else "---"
-        label = create_card(
-            app.dashboard_tags_frame,
+    if not bool_tags:
+        create_empty_section_label(
+            app.dashboard_digital_frame,
+            "No BOOL tags enabled for Dashboard",
+        )
+    for index, tag in enumerate(bool_tags):
+        row, column = divmod(index, DIGITAL_COLUMNS)
+        app.dashboard_tag_cards[tag.name] = create_digital_card(
+            app.dashboard_digital_frame,
+            tag,
+            column,
+            row,
+        )
+
+    if not numeric_tags:
+        create_empty_section_label(
+            app.dashboard_numeric_frame,
+            "No INT/REAL tags enabled for Dashboard",
+        )
+    for index, tag in enumerate(numeric_tags):
+        row, column = divmod(index, NUMERIC_COLUMNS)
+        app.dashboard_tag_cards[tag.name] = create_value_card(
+            app.dashboard_numeric_frame,
             tag.name.upper(),
-            initial_value,
+            "---",
             COLOR_MUTED,
             column,
             row,
             subtitle=f"{tag.data_type}  •  {tag.address}",
         )
-        app.dashboard_tag_cards[tag.name] = label
 
     return dashboard_tags
 
 
+def create_empty_section_label(parent, text):
+    ctk.CTkLabel(
+        parent,
+        text=text,
+        text_color=COLOR_MUTED,
+        anchor="w",
+    ).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+
+
 def update_dashboard(app, last_message=None):
-    if not hasattr(app, "card_connection"):
+    if not hasattr(app, "card_alarm"):
         return
-
-    connected = app.plc_service.is_connected()
-    app.card_connection.configure(
-        text="● ONLINE" if connected else "● OFFLINE",
-        text_color=COLOR_GREEN if connected else COLOR_RED,
-    )
-    style_card(app.card_connection, COLOR_GREEN if connected else COLOR_RED)
-
-    app.card_brand.configure(text=app.brand_menu.get())
-    app.card_ip.configure(text=app.ip_entry.get())
 
     pid_running = getattr(app, "pid_running", False)
     app.card_pid.configure(
@@ -259,4 +364,40 @@ def update_dashboard(app, last_message=None):
         style_card(label, border_color)
 
     if last_message:
-        app.card_last.configure(text=last_message)
+        record_dashboard_event(app, last_message)
+
+
+def record_dashboard_event(app, message):
+    message = str(message).strip()
+    if not message:
+        return
+
+    if not hasattr(app, "dashboard_events"):
+        app.dashboard_events = []
+
+    app.dashboard_events.append((time.strftime("%H:%M:%S"), message))
+    app.dashboard_events = app.dashboard_events[-EVENT_LIMIT:]
+    render_dashboard_events(app)
+
+
+def clear_dashboard_events(app):
+    app.dashboard_events = []
+    render_dashboard_events(app)
+
+
+def render_dashboard_events(app):
+    if not hasattr(app, "dashboard_event_log"):
+        return
+
+    app.dashboard_event_log.configure(state="normal")
+    app.dashboard_event_log.delete("1.0", "end")
+    if not app.dashboard_events:
+        app.dashboard_event_log.insert("end", "--:--:--  No runtime events\n")
+    else:
+        for timestamp, message in app.dashboard_events:
+            app.dashboard_event_log.insert(
+                "end",
+                f"{timestamp}  {message}\n",
+            )
+    app.dashboard_event_log.configure(state="disabled")
+    app.dashboard_event_log.see("end")

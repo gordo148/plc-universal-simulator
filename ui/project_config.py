@@ -23,6 +23,9 @@ def new_project(app):
 
     app.project_path = None
     _update_project_title(app)
+    from ui.dashboard_tab import clear_dashboard_events, update_dashboard
+    clear_dashboard_events(app)
+    update_dashboard(app, "Novo projeto criado")
     app.status_label.configure(text="● NOVO PROJETO", text_color="lime")
     return True
 
@@ -235,7 +238,8 @@ def _apply_project_data(app, project):
         reload_alarms(app, project.get("alarms", []))
         _restore_trends(app, project.get("trends", {}))
 
-        from ui.dashboard_tab import update_dashboard
+        from ui.dashboard_tab import clear_dashboard_events, update_dashboard
+        clear_dashboard_events(app)
         update_dashboard(app, "Projeto carregado")
         return True
     except Exception as error:

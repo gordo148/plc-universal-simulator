@@ -315,7 +315,10 @@ class PLCSimulator:
                 text="● SIMULAÇÃO OFFLINE",
                 text_color="cyan",
             )
-            update_dashboard(self, "Digital simulada")
+            update_dashboard(
+                self,
+                f"Digital {item['tag'].name} = {'ON' if state else 'OFF'} (simulation)",
+            )
             return bool(state)
 
         real_state = self.plc_service.write_bool(item["tag"], state)
@@ -329,7 +332,10 @@ class PLCSimulator:
             real_state,
         )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
-        update_dashboard(self, "Digital alterada")
+        update_dashboard(
+            self,
+            f"Digital {item['tag'].name} = {'ON' if real_state else 'OFF'} (PLC)",
+        )
 
         return real_state
 
@@ -356,7 +362,10 @@ class PLCSimulator:
                 text="● SIMULAÇÃO OFFLINE",
                 text_color="cyan",
             )
-            update_dashboard(self, "Analógica simulada")
+            update_dashboard(
+                self,
+                f"Process value {item['tag'].name} = {value} (simulation)",
+            )
             return value
 
         real_value = self.plc_service.write_numeric(item["tag"], value)
@@ -370,7 +379,10 @@ class PLCSimulator:
             real_value,
         )
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
-        update_dashboard(self, "Analógica alterada")
+        update_dashboard(
+            self,
+            f"Process value {item['tag'].name} = {real_value} (PLC)",
+        )
 
         return real_value
 
