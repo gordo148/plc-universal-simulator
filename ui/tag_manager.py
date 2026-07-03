@@ -109,6 +109,13 @@ def create_tag_manager_tab(app):
 
     ctk.CTkButton(
         controls,
+        text="Import TIA CSV",
+        command=lambda: import_tia_csv(app),
+        width=120,
+    ).pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        controls,
         text="Export CSV",
         command=lambda: export_tags_csv(app),
         width=110,
@@ -470,6 +477,117 @@ def write_tags_csv(file_path, tags):
             })
 
 
+def read_tia_tags_csv(file_path):
+    tags = []
+
+    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+        sample = file.read(4096)
+        file.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+
+        reader = csv.DictReader(file, dialect=dialect)
+        if reader.fieldnames is None:
+            raise ValueError("CSV TIA sem cabeçalho")
+
+        header_map = {
+            _normalize_tia_header(header): header
+            for header in reader.fieldnames
+        }
+        name_column = _find_tia_column(header_map, ["name"])
+        type_column = _find_tia_column(
+            header_map,
+            ["data type", "datatype"],
+        )
+        logical_address_column = _find_tia_column(
+            header_map,
+            ["logical address"],
+        )
+        address_column = _find_tia_column(header_map, ["address"])
+
+        missing = []
+        if name_column is None:
+            missing.append("Name")
+        if type_column is None:
+            missing.append("Data Type")
+        if logical_address_column is None and address_column is None:
+            missing.append("Logical Address/Address")
+        if missing:
+            raise ValueError("colunas TIA em falta: " + ", ".join(missing))
+
+        type_map = {
+            "bool": "BOOL",
+            "boolean": "BOOL",
+            "int": "INT",
+            "real": "REAL",
+        }
+
+        for line_number, row in enumerate(reader, start=2):
+            if not any(str(value or "").strip() for value in row.values()):
+                continue
+
+            try:
+                name = str(row.get(name_column, "") or "").strip()
+                tia_type = str(row.get(type_column, "") or "").strip()
+                raw_address = ""
+                if logical_address_column is not None:
+                    raw_address = str(
+                        row.get(logical_address_column, "") or ""
+                    ).strip()
+                if not raw_address and address_column is not None:
+                    raw_address = str(
+                        row.get(address_column, "") or ""
+                    ).strip()
+
+                if not name:
+                    raise ValueError("Name vazio")
+
+                data_type = type_map.get(tia_type.lower())
+                if data_type is None:
+                    raise ValueError(f"Data Type TIA não suportado: {tia_type}")
+
+                address = raw_address.upper().removeprefix("%")
+                valid, message = validate_tag_address(
+                    "Siemens",
+                    data_type,
+                    address,
+                )
+                if not valid:
+                    raise ValueError(message)
+
+                tags.append(Tag(
+                    name=name,
+                    data_type=data_type,
+                    direction="Input",
+                    address=address,
+                    enabled_sim=True,
+                    enabled_trend=False,
+                    enabled_alarm=False,
+                    enabled_dashboard=True,
+                ))
+            except ValueError as error:
+                raise ValueError(f"linha {line_number}: {error}") from error
+
+    return tags
+
+
+def _normalize_tia_header(header):
+    return re.sub(
+        r"[\s_]+",
+        " ",
+        str(header or "").strip().lower(),
+    )
+
+
+def _find_tia_column(header_map, candidates):
+    for candidate in candidates:
+        if candidate in header_map:
+            return header_map[candidate]
+    return None
+
+
 def import_tags_csv(app):
     file_path = filedialog.askopenfilename(
         initialdir="configs",
@@ -484,6 +602,37 @@ def import_tags_csv(app):
         messagebox.showerror("Erro Import CSV", str(error))
         return
 
+    apply_imported_tags(
+        app,
+        imported_tags,
+        "Erro Import CSV",
+        f"● {len(imported_tags)} TAGS IMPORTADAS",
+    )
+
+
+def import_tia_csv(app):
+    file_path = filedialog.askopenfilename(
+        initialdir="configs",
+        filetypes=[("TIA CSV files", "*.csv"), ("All files", "*.*")],
+    )
+    if not file_path:
+        return
+
+    try:
+        imported_tags = read_tia_tags_csv(file_path)
+    except (OSError, ValueError) as error:
+        messagebox.showerror("Erro Import TIA CSV", str(error))
+        return
+
+    apply_imported_tags(
+        app,
+        imported_tags,
+        "Erro Import TIA CSV",
+        f"● {len(imported_tags)} TAGS TIA IMPORTADAS",
+    )
+
+
+def apply_imported_tags(app, imported_tags, error_title, success_text):
     previous_tags = app.tags
     try:
         app.tags = imported_tags
@@ -493,13 +642,14 @@ def import_tags_csv(app):
         app.tags = previous_tags
         refresh_tag_table(app)
         app.generate_signals()
-        messagebox.showerror("Erro Import CSV", str(error))
-        return
+        messagebox.showerror(error_title, str(error))
+        return False
 
     app.status_label.configure(
-        text=f"● {len(imported_tags)} TAGS IMPORTADAS",
+        text=success_text,
         text_color="lime",
     )
+    return True
 
 
 def export_tags_csv(app):
