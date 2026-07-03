@@ -46,6 +46,10 @@ def create_tag_manager_tab(app):
     app.tag_name_entry = ctk.CTkEntry(controls, width=180)
     app.tag_name_entry.insert(0, "Start_Button")
     app.tag_name_entry.pack(side="left", padx=5)
+    app.tag_name_entry.bind(
+        "<KeyRelease>",
+        lambda _event: on_tag_name_edited(app),
+    )
 
     app.tag_type_menu = ctk.CTkOptionMenu(
         controls,
@@ -79,12 +83,13 @@ def create_tag_manager_tab(app):
         lambda _event: on_tag_address_edited(app),
     )
 
-    ctk.CTkButton(
+    app.tag_suggest_button = ctk.CTkButton(
         controls,
         text="Suggest Address",
         command=lambda: suggest_tag_address(app),
         width=125,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_suggest_button.pack(side="left", padx=5)
 
     ctk.CTkButton(
         controls,
@@ -194,9 +199,11 @@ def add_tag(app):
         return
 
     data_type = app.tag_type_menu.get()
-    address = app.tag_address_entry.get().strip()
-    if app.brand_menu.get() != "Rockwell":
-        address = address.upper()
+    address = resolve_tag_address(
+        app.brand_menu.get(),
+        name,
+        app.tag_address_entry.get(),
+    )
     valid, validation_message = validate_tag_address(
         app.brand_menu.get(),
         data_type,
@@ -322,6 +329,32 @@ def suggest_tag_address(app):
     )
 
 
+def resolve_tag_address(brand, tag_name, entered_address):
+    """Resolve the stored PLC address without changing non-Rockwell rules."""
+    if str(brand).strip() == "Rockwell":
+        return str(tag_name).strip()
+    return str(entered_address).strip().upper()
+
+
+def _sync_rockwell_tag_address(app):
+    address = resolve_tag_address(
+        "Rockwell",
+        app.tag_name_entry.get(),
+        app.tag_address_entry.get(),
+    )
+    app.tag_address_entry.delete(0, "end")
+    app.tag_address_entry.insert(0, address)
+    app.tag_address_manual_edit = False
+    app.tag_last_suggested_address = address
+
+
+def on_tag_name_edited(app):
+    if app.brand_menu.get() != "Rockwell":
+        return
+    _sync_rockwell_tag_address(app)
+    validate_current_tag_address(app)
+
+
 def on_tag_address_edited(app):
     address = app.tag_address_entry.get().strip()
     last_suggestion = getattr(app, "tag_last_suggested_address", "")
@@ -356,6 +389,20 @@ def validate_current_tag_address(app):
 def update_tag_address_context(app):
     if not hasattr(app, "tag_address_entry"):
         return
+
+    if app.brand_menu.get() == "Rockwell":
+        if app.tag_address_entry.winfo_manager():
+            app.tag_address_entry.pack_forget()
+        _sync_rockwell_tag_address(app)
+        validate_current_tag_address(app)
+        return
+
+    if not app.tag_address_entry.winfo_manager():
+        app.tag_address_entry.pack(
+            side="left",
+            padx=5,
+            before=app.tag_suggest_button,
+        )
 
     address = app.tag_address_entry.get().strip()
     if not address or not getattr(app, "tag_address_manual_edit", False):
@@ -413,27 +460,7 @@ def suggest_address(brand, data_type, tags, tag_name=None):
         return f"%MW{candidate}"
 
     if brand == "Rockwell":
-        candidate = re.sub(r"[^A-Za-z0-9_]", "_", str(tag_name or "").strip())
-        if not candidate:
-            candidate = f"Tag_{data_type}"
-        if not re.match(r"[A-Za-z_]", candidate):
-            candidate = f"_{candidate}"
-
-        occupied = {
-            str(tag.address).strip().casefold()
-            for tag in tags
-            if validate_tag_address(
-                "Rockwell",
-                tag.data_type,
-                tag.address,
-            )[0]
-        }
-        suggestion = candidate
-        suffix = 2
-        while suggestion.casefold() in occupied:
-            suggestion = f"{candidate}_{suffix}"
-            suffix += 1
-        return suggestion
+        return str(tag_name or "").strip()
 
     raise ValueError(f"Marca PLC não suportada: {brand}")
 

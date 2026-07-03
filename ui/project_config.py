@@ -12,6 +12,7 @@ from ui.tag_manager import (
     get_tag_by_name,
     normalize_and_validate_tag_names,
     refresh_tag_table,
+    update_tag_address_context,
 )
 
 
@@ -267,6 +268,7 @@ def _apply_project_data(app, project, show_error=True):
         else:
             app.create_rockwell_options()
 
+        update_tag_address_context(app)
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
         _restore_connection_settings(app, brand, plc.get("settings", {}))
 

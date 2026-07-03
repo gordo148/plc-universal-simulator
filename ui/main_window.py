@@ -189,8 +189,8 @@ class PLCSimulator:
             self.create_modbus_options()
         else:
             self.create_rockwell_options()
-            update_tag_address_context(self)
 
+        update_tag_address_context(self)
         self.generate_signals()
 
     def update_schneider_model(self, model):

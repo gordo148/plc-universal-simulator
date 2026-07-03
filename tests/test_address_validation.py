@@ -113,13 +113,13 @@ def test_invalid_rockwell_symbolic_addresses(address):
     assert not validate_tag_address("Rockwell", "BOOL", address)[0]
 
 
-def test_rockwell_suggestion_uses_tag_manager_name_and_avoids_duplicates():
+def test_rockwell_suggestion_returns_tag_manager_name():
     tags = [TagDefinition("Existing", "BOOL", "Input", "Motor_Run")]
 
     assert suggest_address(
         "Rockwell",
         "BOOL",
         tags,
-        "Motor Run",
-    ) == "Motor_Run_2"
-    assert suggest_address("Rockwell", "REAL", [], "Tank Level") == "Tank_Level"
+        "Motor_Run",
+    ) == "Motor_Run"
+    assert suggest_address("Rockwell", "REAL", [], "Tank_Level") == "Tank_Level"
