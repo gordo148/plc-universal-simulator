@@ -57,6 +57,10 @@ class RuntimeTagCache:
             if runtime.source == source:
                 runtime.valid = False
 
+    def clear(self) -> None:
+        """Discard all temporary runtime values."""
+        self._values.clear()
+
     def get(self, name: str) -> TagRuntime | None:
         return self._values.get(name)
 

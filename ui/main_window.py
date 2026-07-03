@@ -14,7 +14,12 @@ from ui.pid_logic import start_pid as pid_start
 from ui.pid_logic import stop_pid as pid_stop
 from ui.pid_logic import run_pid_loop as pid_run_loop
 from ui.pid_logic import write_pid_output as pid_write_output
-from ui.project_config import save_project, load_project
+from ui.project_config import (
+    new_project,
+    open_project,
+    save_project,
+    save_project_as,
+)
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
 from ui.trend_tab import create_trend_tab, stop_trend, create_ai_checkboxes
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
@@ -46,6 +51,7 @@ class PLCSimulator:
         self.digital_widgets = []
         self.analog_widgets = []
         self.analog_profile_running = {}
+        self.project_path = None
 
         self.cyclic_read_enabled = False
 
@@ -55,7 +61,7 @@ class PLCSimulator:
         self.pid_last_time = time.time()
 
         self.app = ctk.CTk()
-        self.app.title("PLC Simulator Universal")
+        self.app.title("PLC Simulator Universal — Novo Projeto")
         self.app.geometry("1500x850")
         self.app.minsize(1200, 750)
 
@@ -442,10 +448,19 @@ class PLCSimulator:
         update_dashboard(self, "Reset executado")
 
     def save_project(self):
-        save_project(self)
+        return save_project(self)
+
+    def save_project_as(self):
+        return save_project_as(self)
+
+    def new_project(self):
+        return new_project(self)
+
+    def open_project(self):
+        return open_project(self)
 
     def load_project(self):
-        load_project(self)
+        return open_project(self)
 
     def run(self):
         self.app.mainloop()

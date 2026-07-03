@@ -1,0 +1,104 @@
+{
+    "format": "plc-universal-simulator-project",
+    "version": 1,
+    "plc": {
+        "brand": "Siemens",
+        "ip": "192.168.1.10",
+        "settings": {
+            "rack": "0",
+            "slot": "1",
+            "db_number": "100"
+        }
+    },
+    "tags": [
+        {
+            "name": "Start_Button",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX0.0",
+            "enabled_sim": true,
+            "enabled_trend": true,
+            "enabled_alarm": false,
+            "enabled_dashboard": true
+        },
+        {
+            "name": "Start_Button",
+            "data_type": "INT",
+            "direction": "Input",
+            "address": "DBW2",
+            "enabled_sim": true,
+            "enabled_trend": true,
+            "enabled_alarm": false,
+            "enabled_dashboard": true
+        },
+        {
+            "name": "Start_Button",
+            "data_type": "INT",
+            "direction": "Input",
+            "address": "DBW4",
+            "enabled_sim": true,
+            "enabled_trend": true,
+            "enabled_alarm": false,
+            "enabled_dashboard": true
+        }
+    ],
+    "runtime_settings": {
+        "digital_inputs": [
+            {
+                "tag": "Start_Button",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            }
+        ]
+    },
+    "alarms": [],
+    "pid": {
+        "sp": "10000",
+        "sp_source": "Manual",
+        "pv_source": "Start_Button",
+        "out_source": "Start_Button",
+        "out_address": "DBX0.0",
+        "kp": "1.0",
+        "ki": "0.0",
+        "kd": "0.0",
+        "out_min": "0",
+        "out_max": "27648",
+        "interval_ms": "500"
+    },
+    "trends": {
+        "enabled_tags": [
+            "Start_Button",
+            "Start_Button",
+            "Start_Button"
+        ],
+        "selected_curves": [
+            "Start_Button"
+        ],
+        "auto_scale": true
+    },
+    "dashboard": {
+        "enabled_tags": [
+            "Start_Button",
+            "Start_Button",
+            "Start_Button"
+        ]
+    },
+    "analog_profiles": [
+        {
+            "tag": "Start_Button",
+            "mode": "Manual",
+            "min": "0",
+            "max": "27648",
+            "step": "500",
+            "interval_ms": "500"
+        },
+        {
+            "tag": "Start_Button",
+            "mode": "Manual",
+            "min": "0",
+            "max": "27648",
+            "step": "500",
+            "interval_ms": "500"
+        }
+    ]
+}

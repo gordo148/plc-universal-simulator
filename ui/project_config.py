@@ -1,9 +1,10 @@
 import json
-from tkinter import filedialog
+import os
+from tkinter import filedialog, messagebox
+
 from core.tag_model import Tag
 from ui.header import SCHNEIDER_MODELS
 from ui.tag_manager import (
-    get_input_analog_tags,
     get_numeric_tags,
     get_pid_output_tags,
     get_tag_by_name,
@@ -11,18 +12,140 @@ from ui.tag_manager import (
 )
 
 
+PROJECT_EXTENSION = ".simproject"
+PROJECT_FORMAT = "plc-universal-simulator-project"
+PROJECT_VERSION = 1
+
+
+def new_project(app):
+    if not _apply_project_data(app, _default_project_data()):
+        return False
+
+    app.project_path = None
+    _update_project_title(app)
+    app.status_label.configure(text="● NOVO PROJETO", text_color="lime")
+    return True
+
+
 def save_project(app):
+    file_path = getattr(app, "project_path", None)
+    if not file_path:
+        return save_project_as(app)
+    return _write_project(app, file_path)
+
+
+def save_project_as(app):
+    file_path = filedialog.asksaveasfilename(
+        initialdir="configs",
+        defaultextension=PROJECT_EXTENSION,
+        filetypes=[("Simulator projects", f"*{PROJECT_EXTENSION}")],
+        initialfile=f"project{PROJECT_EXTENSION}",
+    )
+    if not file_path:
+        return False
+
+    return _write_project(app, _project_path(file_path))
+
+
+def open_project(app):
+    file_path = filedialog.askopenfilename(
+        initialdir="configs",
+        filetypes=[("Simulator projects", f"*{PROJECT_EXTENSION}")],
+    )
+    if not file_path:
+        return False
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            project = json.load(file)
+        _validate_project_data(project)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        messagebox.showerror("Erro ao abrir projeto", str(error))
+        return False
+
+    if not _apply_project_data(app, project):
+        return False
+
+    app.project_path = file_path
+    _update_project_title(app)
+    app.status_label.configure(text="● PROJETO ABERTO", text_color="lime")
+    return True
+
+
+# Backwards-compatible action name used by older callers.
+load_project = open_project
+
+
+def build_project_data(app):
+    brand = app.brand_menu.get()
     output_tag = get_tag_by_name(app, app.pid_out_menu.get())
 
-    config = {
-        "tags": [tag.to_dict() for tag in getattr(app, "tags", [])],
-        "brand": app.brand_menu.get(),
+    connection = {
+        "brand": brand,
         "ip": app.ip_entry.get(),
+        "settings": {},
+    }
+    if brand == "Siemens":
+        connection["settings"] = {
+            "rack": app.rack_entry.get(),
+            "slot": app.slot_entry.get(),
+            "db_number": app.db_entry.get(),
+        }
+    else:
+        connection["settings"] = {
+            "model": app.schneider_model_menu.get(),
+            "port": app.port_entry.get(),
+            "slave_id": app.slave_entry.get(),
+            "coil_start": app.coil_start_entry.get(),
+            "register_start": app.reg_start_entry.get(),
+        }
 
-        "digitals": [],
-        "analogs": [],
-        "alarms": [],
+    digital_inputs = []
+    for item in getattr(app, "digital_widgets", []):
+        digital_inputs.append({
+            "tag": item["tag"].name,
+            "mode": item["mode_menu"].get(),
+            "pulse_ms": item["pulse_entry"].get(),
+        })
 
+    analog_profiles = []
+    for item in getattr(app, "analog_widgets", []):
+        analog_profiles.append({
+            "tag": item["tag"].name,
+            "mode": item["profile_mode"].get(),
+            "min": item["min_entry"].get(),
+            "max": item["max_entry"].get(),
+            "step": item["step_entry"].get(),
+            "interval_ms": item["interval_entry"].get(),
+        })
+
+    alarms = [
+        {
+            "source": alarm["source"],
+            "type": alarm["type"],
+            "limit": alarm["limit"],
+        }
+        for alarm in getattr(app, "alarms", [])
+    ]
+
+    selected_curves = [
+        name
+        for name, variable in getattr(app, "trend_tag_vars", {}).items()
+        if variable.get()
+    ]
+
+    return {
+        "format": PROJECT_FORMAT,
+        "version": PROJECT_VERSION,
+        "plc": connection,
+        "tags": [
+            tag.to_dict()
+            for tag in getattr(app, "tags", [])
+        ],
+        "runtime_settings": {
+            "digital_inputs": digital_inputs,
+        },
+        "alarms": alarms,
         "pid": {
             "sp": app.pid_sp_entry.get(),
             "sp_source": app.pid_sp_source_menu.get(),
@@ -34,190 +157,183 @@ def save_project(app):
             "kd": app.pid_kd_entry.get(),
             "out_min": app.pid_out_min_entry.get(),
             "out_max": app.pid_out_max_entry.get(),
-            "interval_ms": app.pid_interval_entry.get()
-        }
+            "interval_ms": app.pid_interval_entry.get(),
+        },
+        "trends": {
+            "enabled_tags": [
+                tag.name for tag in getattr(app, "tags", [])
+                if tag.enabled_trend
+            ],
+            "selected_curves": selected_curves,
+            "auto_scale": bool(app.trend_auto_scale.get()),
+        },
+        "dashboard": {
+            "enabled_tags": [
+                tag.name for tag in getattr(app, "tags", [])
+                if tag.enabled_dashboard
+            ],
+        },
+        "analog_profiles": analog_profiles,
     }
 
-    for item in app.digital_widgets:
-        config["digitals"].append({
-            "name": item["name_entry"].get(),
-            "mode": item["mode_menu"].get(),
-            "pulse_ms": item["pulse_entry"].get()
-        })
 
-    for item in app.analog_widgets:
-        config["analogs"].append({
-            "name": item["name_entry"].get(),
-            "profile_mode": item["profile_mode"].get(),
-            "min": item["min_entry"].get(),
-            "max": item["max_entry"].get(),
-            "step": item["step_entry"].get(),
-            "interval_ms": item["interval_entry"].get()
-        })
+def _write_project(app, file_path):
+    try:
+        with open(file_path, "w", encoding="utf-8") as file:
+            json.dump(
+                build_project_data(app),
+                file,
+                indent=4,
+                ensure_ascii=False,
+            )
+    except (OSError, TypeError, ValueError) as error:
+        messagebox.showerror("Erro ao guardar projeto", str(error))
+        return False
 
-    if hasattr(app, "alarms"):
-        for alarm in app.alarms:
-            config["alarms"].append({
-                "source": alarm["source"],
-                "type": alarm["type"],
-                "limit": alarm["limit"]
-            })
-
-    if app.brand_menu.get() == "Siemens":
-        config["siemens"] = {
-            "rack": app.rack_entry.get(),
-            "slot": app.slot_entry.get(),
-            "db": app.db_entry.get()
-        }
-    else:
-        config["schneider"] = {
-            "model": app.schneider_model_menu.get(),
-            "port": app.port_entry.get(),
-            "slave_id": app.slave_entry.get(),
-            "coil_start": app.coil_start_entry.get(),
-            "reg_start": app.reg_start_entry.get()
-        }
-
-    file_path = filedialog.asksaveasfilename(
-        initialdir="configs",
-        defaultextension=".json",
-        filetypes=[("JSON files", "*.json")],
-        initialfile="projeto_plc.json"
-    )
-
-    if not file_path:
-        return
-
-    with open(file_path, "w", encoding="utf-8") as file:
-        json.dump(config, file, indent=4, ensure_ascii=False)
-
+    app.project_path = file_path
+    _update_project_title(app)
     app.status_label.configure(text="● PROJETO GUARDADO", text_color="lime")
+    return True
 
 
-def load_project(app):
-    file_path = filedialog.askopenfilename(
-        initialdir="configs",
-        filetypes=[("JSON files", "*.json")]
-    )
+def _apply_project_data(app, project):
+    try:
+        app.disconnect()
 
-    if not file_path:
+        tags = [
+            Tag.from_dict(tag_data)
+            for tag_data in project.get("tags", [])
+            if isinstance(tag_data, dict)
+        ]
+        _restore_tag_feature_configuration(tags, project)
+        app.tags = tags
+        app.tag_runtime.clear()
+
+        plc = project.get("plc", {})
+        brand = plc.get("brand", "Siemens")
+        if brand not in ("Siemens", "Schneider"):
+            raise ValueError(f"Marca PLC inválida: {brand}")
+
+        app.brand_menu.set(brand)
+        if brand == "Siemens":
+            app.create_siemens_options()
+        else:
+            app.create_schneider_options()
+
+        _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
+        _restore_connection_settings(app, brand, plc.get("settings", {}))
+
+        refresh_tag_table(app)
+        app.generate_signals()
+
+        _restore_digital_settings(
+            app,
+            project.get("runtime_settings", {}).get("digital_inputs", []),
+        )
+        _restore_analog_profiles(app, project.get("analog_profiles", []))
+        _restore_pid(app, project.get("pid", {}))
+        reload_alarms(app, project.get("alarms", []))
+        _restore_trends(app, project.get("trends", {}))
+
+        from ui.dashboard_tab import update_dashboard
+        update_dashboard(app, "Projeto carregado")
+        return True
+    except Exception as error:
+        messagebox.showerror("Erro ao aplicar projeto", str(error))
+        return False
+
+
+def _restore_tag_feature_configuration(tags, project):
+    trends = project.get("trends", {})
+    if "enabled_tags" in trends:
+        enabled = set(trends.get("enabled_tags", []))
+        for tag in tags:
+            tag.enabled_trend = tag.name in enabled
+
+    dashboard = project.get("dashboard", {})
+    if "enabled_tags" in dashboard:
+        enabled = set(dashboard.get("enabled_tags", []))
+        for tag in tags:
+            tag.enabled_dashboard = tag.name in enabled
+
+
+def _restore_connection_settings(app, brand, settings):
+    if brand == "Siemens":
+        _set_entry(app.rack_entry, settings.get("rack", "0"))
+        _set_entry(app.slot_entry, settings.get("slot", "1"))
+        _set_entry(app.db_entry, settings.get("db_number", "100"))
         return
 
-    with open(file_path, "r", encoding="utf-8") as file:
-        config = json.load(file)
+    model = settings.get("model", "M221")
+    if model not in SCHNEIDER_MODELS:
+        model = "M221"
+    app.schneider_model_menu.set(model)
+    _set_entry(app.port_entry, settings.get("port", "502"))
+    _set_entry(app.slave_entry, settings.get("slave_id", "1"))
+    _set_entry(app.coil_start_entry, settings.get("coil_start", "0"))
+    _set_entry(app.reg_start_entry, settings.get("register_start", "0"))
+    app.schneider_info.configure(text=SCHNEIDER_MODELS[model]["description"])
 
-    app.tags = [
-        Tag.from_dict(tag_data)
-        for tag_data in config.get("tags", [])
-        if isinstance(tag_data, dict)
-    ]
 
-    if hasattr(app, "tag_table"):
-        refresh_tag_table(app)
+def _restore_digital_settings(app, settings):
+    by_tag = {
+        str(item.get("tag", "")): item
+        for item in settings
+        if isinstance(item, dict)
+    }
+    for index, widget in enumerate(app.digital_widgets):
+        config = by_tag.get(widget["tag"].name)
+        if config is None:
+            continue
+        mode = config.get("mode", "Toggle")
+        widget["mode_menu"].set(mode if mode in ("Toggle", "Pulse") else "Toggle")
+        _set_entry(widget["pulse_entry"], config.get("pulse_ms", "500"))
+        app.update_digital_name(index)
 
-    brand = config.get("brand", "Siemens")
 
-    app.brand_menu.set(brand)
-    app.update_brand(brand)
+def _restore_analog_profiles(app, profiles):
+    by_tag = {
+        str(item.get("tag", "")): item
+        for item in profiles
+        if isinstance(item, dict)
+    }
+    for widget in app.analog_widgets:
+        config = by_tag.get(widget["tag"].name)
+        if config is None:
+            continue
+        mode = config.get("mode", "Manual")
+        widget["profile_mode"].set(
+            mode if mode in ("Manual", "Ramp", "Random", "Step") else "Manual"
+        )
+        _set_entry(widget["min_entry"], config.get("min", "0"))
+        _set_entry(widget["max_entry"], config.get("max", "27648"))
+        _set_entry(widget["step_entry"], config.get("step", "500"))
+        _set_entry(widget["interval_entry"], config.get("interval_ms", "500"))
+        widget["profile_status"].configure(text="MANUAL", text_color="gray")
 
-    app.ip_entry.delete(0, "end")
-    app.ip_entry.insert(0, config.get("ip", "192.168.1.10"))
 
-    if brand == "Siemens":
-        siemens = config.get("siemens", {})
-
-        app.rack_entry.delete(0, "end")
-        app.rack_entry.insert(0, siemens.get("rack", "0"))
-
-        app.slot_entry.delete(0, "end")
-        app.slot_entry.insert(0, siemens.get("slot", "1"))
-
-        app.db_entry.delete(0, "end")
-        app.db_entry.insert(0, siemens.get("db", "100"))
-
-    else:
-        schneider = config.get("schneider", {})
-        model = schneider.get("model", "M221")
-
-        app.schneider_model_menu.set(model)
-
-        app.port_entry.delete(0, "end")
-        app.port_entry.insert(0, schneider.get("port", "502"))
-
-        app.slave_entry.delete(0, "end")
-        app.slave_entry.insert(0, schneider.get("slave_id", "1"))
-
-        app.coil_start_entry.delete(0, "end")
-        app.coil_start_entry.insert(0, schneider.get("coil_start", "0"))
-
-        app.reg_start_entry.delete(0, "end")
-        app.reg_start_entry.insert(0, schneider.get("reg_start", "0"))
-
-        app.schneider_info.configure(text=SCHNEIDER_MODELS[model]["description"])
-
-    app.generate_signals()
-
-    digitals = config.get("digitals", [])
-
-    for i, digital in enumerate(digitals):
-        if i < len(app.digital_widgets):
-            item = app.digital_widgets[i]
-
-            item["name_entry"].delete(0, "end")
-            item["name_entry"].insert(0, digital.get("name", f"DI_{i + 1:02d}"))
-
-            item["mode_menu"].set(digital.get("mode", "Toggle"))
-
-            item["pulse_entry"].delete(0, "end")
-            item["pulse_entry"].insert(0, digital.get("pulse_ms", "500"))
-
-            app.update_digital_name(i)
-
-    analogs = config.get("analogs", [])
-
-    for i, analog in enumerate(analogs):
-        if i < len(app.analog_widgets):
-            item = app.analog_widgets[i]
-
-            item["name_entry"].delete(0, "end")
-            item["name_entry"].insert(0, analog.get("name", f"AI_{i + 1:02d}"))
-
-            item["profile_mode"].set(analog.get("profile_mode", "Manual"))
-
-            item["min_entry"].delete(0, "end")
-            item["min_entry"].insert(0, analog.get("min", "0"))
-
-            item["max_entry"].delete(0, "end")
-            item["max_entry"].insert(0, analog.get("max", "27648"))
-
-            item["step_entry"].delete(0, "end")
-            item["step_entry"].insert(0, analog.get("step", "500"))
-
-            item["interval_entry"].delete(0, "end")
-            item["interval_entry"].insert(0, analog.get("interval_ms", "500"))
-
-    pid = config.get("pid", {})
-
-    app.pid_sp_entry.delete(0, "end")
-    app.pid_sp_entry.insert(0, pid.get("sp", "10000"))
-
-    app.pid_kp_entry.delete(0, "end")
-    app.pid_kp_entry.insert(0, pid.get("kp", "1.0"))
-
-    app.pid_ki_entry.delete(0, "end")
-    app.pid_ki_entry.insert(0, pid.get("ki", "0.0"))
-
-    app.pid_kd_entry.delete(0, "end")
-    app.pid_kd_entry.insert(0, pid.get("kd", "0.0"))
-
-    app.pid_out_min_entry.delete(0, "end")
-    app.pid_out_min_entry.insert(0, pid.get("out_min", "0"))
-
-    app.pid_out_max_entry.delete(0, "end")
-    app.pid_out_max_entry.insert(0, pid.get("out_max", "27648"))
-
-    app.pid_interval_entry.delete(0, "end")
-    app.pid_interval_entry.insert(0, pid.get("interval_ms", "500"))
+def _restore_pid(app, pid):
+    app.stop_pid()
+    defaults = {
+        "sp": "10000",
+        "kp": "1.0",
+        "ki": "0.0",
+        "kd": "0.0",
+        "out_min": "0",
+        "out_max": "27648",
+        "interval_ms": "500",
+    }
+    entries = {
+        "sp": app.pid_sp_entry,
+        "kp": app.pid_kp_entry,
+        "ki": app.pid_ki_entry,
+        "kd": app.pid_kd_entry,
+        "out_min": app.pid_out_min_entry,
+        "out_max": app.pid_out_max_entry,
+        "interval_ms": app.pid_interval_entry,
+    }
+    for field, entry in entries.items():
+        _set_entry(entry, pid.get(field, defaults[field]))
 
     numeric_names = [tag.name for tag in get_numeric_tags(app)]
     output_tags = get_pid_output_tags(app)
@@ -229,12 +345,6 @@ def load_project(app):
     )
 
     pv_source = str(pid.get("pv_source", "") or "")
-    if pv_source.startswith("AI_"):
-        try:
-            legacy_index = int(pv_source.split("_")[1]) - 1
-            pv_source = get_input_analog_tags(app)[legacy_index].name
-        except (IndexError, TypeError, ValueError):
-            pv_source = ""
     app.pid_pv_menu.set(
         pv_source if pv_source in numeric_names
         else (numeric_names[0] if numeric_names else "")
@@ -255,9 +365,74 @@ def load_project(app):
         else (output_names[0] if output_names else "")
     )
 
-    reload_alarms(app, config.get("alarms", []))
 
-    app.status_label.configure(text="● PROJETO CARREGADO", text_color="lime")
+def _restore_trends(app, trends):
+    from ui.trend_tab import clear_trend, create_ai_checkboxes, stop_trend
+
+    stop_trend(app)
+    clear_trend(app)
+    app.trend_auto_scale.set(bool(trends.get("auto_scale", True)))
+    create_ai_checkboxes(app)
+
+    selected = set(trends.get("selected_curves", []))
+    for name, variable in app.trend_tag_vars.items():
+        variable.set(name in selected)
+
+
+def _default_project_data():
+    return {
+        "format": PROJECT_FORMAT,
+        "version": PROJECT_VERSION,
+        "plc": {
+            "brand": "Siemens",
+            "ip": "192.168.1.10",
+            "settings": {
+                "rack": "0",
+                "slot": "1",
+                "db_number": "100",
+            },
+        },
+        "tags": [],
+        "runtime_settings": {"digital_inputs": []},
+        "alarms": [],
+        "pid": {},
+        "trends": {
+            "enabled_tags": [],
+            "selected_curves": [],
+            "auto_scale": True,
+        },
+        "dashboard": {"enabled_tags": []},
+        "analog_profiles": [],
+    }
+
+
+def _validate_project_data(project):
+    if not isinstance(project, dict):
+        raise ValueError("Formato de projeto inválido")
+    if project.get("format") != PROJECT_FORMAT:
+        raise ValueError("O ficheiro não é um projeto do PLC Simulator")
+    if project.get("version") != PROJECT_VERSION:
+        raise ValueError(f"Versão de projeto não suportada: {project.get('version')}")
+    if not isinstance(project.get("tags", []), list):
+        raise ValueError("Lista de tags inválida")
+
+
+def _project_path(file_path):
+    path = str(file_path)
+    if not path.lower().endswith(PROJECT_EXTENSION):
+        path += PROJECT_EXTENSION
+    return path
+
+
+def _set_entry(entry, value):
+    entry.delete(0, "end")
+    entry.insert(0, str(value))
+
+
+def _update_project_title(app):
+    file_path = getattr(app, "project_path", None)
+    project_name = os.path.basename(file_path) if file_path else "Novo Projeto"
+    app.app.title(f"PLC Simulator Universal — {project_name}")
 
 
 def _normalize_pid_address(address):
@@ -287,23 +462,27 @@ def reload_alarms(app, alarms):
 
     app.alarms.clear()
     app.alarm_rows.clear()
-
     enabled_sources = [tag.name for tag in get_alarm_tags(app)]
 
     for alarm_config in alarms:
+        if not isinstance(alarm_config, dict):
+            continue
+        source = str(alarm_config.get("source", ""))
+        if source not in enabled_sources:
+            continue
+        alarm_type = alarm_config.get("type", "HIGH")
+        if alarm_type not in ("HIGH HIGH", "HIGH", "LOW", "LOW LOW"):
+            alarm_type = "HIGH"
+
         alarm = {
-            "source": alarm_config.get(
-                "source",
-                enabled_sources[0] if enabled_sources else ""
-            ),
-            "type": alarm_config.get("type", "HIGH"),
+            "source": source,
+            "type": alarm_type,
             "limit": int(alarm_config.get("limit", 20000)),
             "active": False,
             "ack": False,
             "last_value": 0,
-            "timestamp": "-"
+            "timestamp": "-",
         }
-
         app.alarms.append(alarm)
         create_alarm_row(app, alarm)
 
