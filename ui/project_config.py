@@ -1,5 +1,7 @@
+import copy
 import json
 import os
+import tempfile
 from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
@@ -19,7 +21,7 @@ PROJECT_VERSION = 1
 
 
 def new_project(app):
-    if not _apply_project_data(app, _default_project_data()):
+    if not _apply_project_data(app, _stage_project_data(_default_project_data())):
         return False
 
     app.project_path = None
@@ -62,12 +64,22 @@ def open_project(app):
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             project = json.load(file)
-        _validate_project_data(project)
+        staged_project = _stage_project_data(project)
     except (OSError, json.JSONDecodeError, ValueError) as error:
         messagebox.showerror("Erro ao abrir projeto", str(error))
         return False
 
-    if not _apply_project_data(app, project):
+    current_project = _stage_project_data(build_project_data(app))
+    runtime_snapshot = app.tag_runtime.snapshot()
+    current_path = getattr(app, "project_path", None)
+
+    if not _apply_project_data(app, staged_project):
+        _apply_project_data(app, current_project, show_error=False)
+        app.tag_runtime.restore(runtime_snapshot, app.tags)
+        app.project_path = current_path
+        _update_project_title(app)
+        if hasattr(app, "update_runtime_widgets"):
+            app.update_runtime_widgets()
         return False
 
     app.project_path = file_path
@@ -182,15 +194,36 @@ def build_project_data(app):
 
 
 def _write_project(app, file_path):
+    temporary_path = None
     try:
-        with open(file_path, "w", encoding="utf-8") as file:
+        project = _stage_project_data(build_project_data(app))
+        destination = os.path.abspath(file_path)
+        directory = os.path.dirname(destination)
+        os.makedirs(directory, exist_ok=True)
+
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(destination)}.",
+            suffix=".tmp",
+            dir=directory,
+            text=True,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
             json.dump(
-                build_project_data(app),
+                project,
                 file,
                 indent=4,
                 ensure_ascii=False,
             )
-    except (OSError, TypeError, ValueError) as error:
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    except Exception as error:
+        if temporary_path and os.path.exists(temporary_path):
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
         messagebox.showerror("Erro ao guardar projeto", str(error))
         return False
 
@@ -200,7 +233,7 @@ def _write_project(app, file_path):
     return True
 
 
-def _apply_project_data(app, project):
+def _apply_project_data(app, project, show_error=True):
     try:
         app.disconnect()
 
@@ -248,7 +281,8 @@ def _apply_project_data(app, project):
         update_dashboard(app, "Projeto carregado")
         return True
     except Exception as error:
-        messagebox.showerror("Erro ao aplicar projeto", str(error))
+        if show_error:
+            messagebox.showerror("Erro ao aplicar projeto", str(error))
         return False
 
 
@@ -415,6 +449,81 @@ def _default_project_data():
     }
 
 
+def _stage_project_data(project):
+    _validate_project_data(project)
+    staged = copy.deepcopy(project)
+
+    plc = staged.get("plc")
+    if not isinstance(plc, dict):
+        raise ValueError("Configuração PLC inválida")
+    brand = plc.get("brand", "Siemens")
+    if brand not in ("Siemens", "Schneider"):
+        raise ValueError(f"Marca PLC inválida: {brand}")
+    if not isinstance(plc.get("settings", {}), dict):
+        raise ValueError("Definições de ligação PLC inválidas")
+
+    tags = []
+    for index, tag_data in enumerate(staged.get("tags", []), start=1):
+        if not isinstance(tag_data, dict):
+            raise ValueError(f"Tag {index}: definição inválida")
+        tag = Tag.from_dict(tag_data)
+        if tag.data_type not in ("BOOL", "INT", "REAL"):
+            raise ValueError(f"Tag {index}: tipo inválido {tag.data_type}")
+        if tag.direction not in ("Input", "Feedback", "Output", "Internal"):
+            raise ValueError(f"Tag {index}: direção inválida {tag.direction}")
+        if not isinstance(tag.address, str) or not tag.address.strip():
+            raise ValueError(f"Tag {index}: endereço vazio")
+        tag.address = tag.address.strip().upper()
+        tags.append(tag)
+
+    names_valid, names_message = normalize_and_validate_tag_names(tags)
+    if not names_valid:
+        raise ValueError(names_message)
+    staged["tags"] = [tag.to_dict() for tag in tags]
+
+    section_types = {
+        "runtime_settings": dict,
+        "pid": dict,
+        "trends": dict,
+        "dashboard": dict,
+        "alarms": list,
+        "analog_profiles": list,
+    }
+    for section, expected_type in section_types.items():
+        value = staged.get(section, expected_type())
+        if not isinstance(value, expected_type):
+            raise ValueError(f"Secção de projeto inválida: {section}")
+        staged[section] = value
+
+    runtime_settings = staged["runtime_settings"]
+    if not isinstance(runtime_settings.get("digital_inputs", []), list):
+        raise ValueError("Configuração de entradas digitais inválida")
+
+    tag_types = {tag.name: tag.data_type for tag in tags}
+    normalized_alarms = []
+    for index, alarm in enumerate(staged["alarms"], start=1):
+        if not isinstance(alarm, dict):
+            raise ValueError(f"Alarme {index}: configuração inválida")
+        source = str(alarm.get("source", "")).strip()
+        alarm_type = alarm.get("type", "HIGH")
+        if alarm_type not in ("HIGH HIGH", "HIGH", "LOW", "LOW LOW"):
+            raise ValueError(f"Alarme {index}: tipo inválido {alarm_type}")
+        try:
+            numeric_limit = float(alarm.get("limit", 20000))
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Alarme {index}: limite inválido") from error
+        if tag_types.get(source) != "REAL" and numeric_limit.is_integer():
+            numeric_limit = int(numeric_limit)
+        normalized_alarms.append({
+            "source": source,
+            "type": alarm_type,
+            "limit": numeric_limit,
+        })
+    staged["alarms"] = normalized_alarms
+
+    return staged
+
+
 def _validate_project_data(project):
     if not isinstance(project, dict):
         raise ValueError("Formato de projeto inválido")
@@ -422,6 +531,8 @@ def _validate_project_data(project):
         raise ValueError("O ficheiro não é um projeto do PLC Simulator")
     if project.get("version") != PROJECT_VERSION:
         raise ValueError(f"Versão de projeto não suportada: {project.get('version')}")
+    if "plc" not in project:
+        raise ValueError("Configuração PLC em falta")
     if not isinstance(project.get("tags", []), list):
         raise ValueError("Lista de tags inválida")
 
@@ -461,7 +572,11 @@ def reload_alarms(app, alarms):
     if not hasattr(app, "alarms"):
         return
 
-    from ui.alarm_tab import create_alarm_row, update_alarm_status
+    from ui.alarm_tab import (
+        create_alarm_row,
+        normalize_alarm_limit,
+        update_alarm_status,
+    )
     from ui.tag_manager import get_alarm_tags
 
     for row in app.alarm_rows:
@@ -487,7 +602,11 @@ def reload_alarms(app, alarms):
         alarm = {
             "source": source,
             "type": alarm_type,
-            "limit": int(alarm_config.get("limit", 20000)),
+            "limit": normalize_alarm_limit(
+                app,
+                source,
+                alarm_config.get("limit", 20000),
+            ),
             "active": False,
             "ack": False,
             "last_value": 0,

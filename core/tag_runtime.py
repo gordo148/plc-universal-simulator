@@ -102,3 +102,19 @@ class RuntimeTagCache:
             )
             for name, item in self._values.items()
         }
+
+    def restore(
+        self,
+        snapshot: dict[str, TagRuntime],
+        definitions: Iterable[TagDefinition],
+    ) -> None:
+        """Restore volatile state after a failed configuration transaction."""
+        self.sync(definitions)
+        for name, item in snapshot.items():
+            if name in self._values:
+                self._values[name] = TagRuntime(
+                    item.value,
+                    item.valid,
+                    item.updated_at,
+                    item.source,
+                )

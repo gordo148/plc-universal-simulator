@@ -440,7 +440,7 @@ def parse_csv_bool(value):
     raise ValueError(f"valor booleano inválido: {value}")
 
 
-def read_tags_csv(file_path):
+def read_tags_csv(file_path, brand=None):
     tags = []
 
     with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
@@ -493,11 +493,21 @@ def read_tags_csv(file_path):
                 if not values["name"]:
                     raise ValueError("name vazio")
 
+                address = values["address"].upper()
+                if brand is not None:
+                    valid, validation_message = validate_tag_address(
+                        brand,
+                        data_type,
+                        address,
+                    )
+                    if not valid:
+                        raise ValueError(validation_message)
+
                 tags.append(Tag(
                     name=values["name"],
                     data_type=data_type,
                     direction=direction,
-                    address=values["address"],
+                    address=address,
                     enabled_sim=parse_csv_bool(values["enabled_sim"]),
                     enabled_trend=parse_csv_bool(values["enabled_trend"]),
                     enabled_alarm=parse_csv_bool(values["enabled_alarm"]),
@@ -761,7 +771,7 @@ def import_tags_csv(app):
         return
 
     try:
-        imported_tags = read_tags_csv(file_path)
+        imported_tags = read_tags_csv(file_path, app.brand_menu.get())
     except (OSError, ValueError) as error:
         messagebox.showerror("Erro Import CSV", str(error))
         return

@@ -99,7 +99,11 @@ def add_alarm(app):
     try:
         source = app.alarm_source_menu.get()
         alarm_type = app.alarm_type_menu.get()
-        limit = int(app.alarm_limit_entry.get())
+        limit = normalize_alarm_limit(
+            app,
+            source,
+            app.alarm_limit_entry.get(),
+        )
 
         if source not in {tag.name for tag in get_alarm_tags(app)}:
             raise ValueError("Alarm source is not enabled")
@@ -120,6 +124,20 @@ def add_alarm(app):
     app.alarms.append(alarm)
     create_alarm_row(app, alarm)
     update_alarm_status(app)
+
+
+def normalize_alarm_limit(app, source, value):
+    tag = next(
+        (tag for tag in get_alarm_tags(app) if tag.name == source),
+        None,
+    )
+    if tag is None:
+        raise ValueError("Alarm source is not enabled")
+
+    numeric_limit = float(value)
+    if tag.data_type != "REAL" and numeric_limit.is_integer():
+        return int(numeric_limit)
+    return numeric_limit
 
 
 def create_alarm_row(app, alarm):
