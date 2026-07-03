@@ -10,7 +10,8 @@ __pycache__/
 .vscode/
 
 # Build
-build/
+build/*
+!build/README.md
 dist/
 
 # Logs

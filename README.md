@@ -85,6 +85,33 @@ Planned support:
 
 ---
 
+## Linux Build
+
+Install the project dependencies and run the one-folder PyInstaller build:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+./scripts/build_linux.sh
+```
+
+The packaged application is created at:
+
+```text
+dist/plc-universal-simulator/plc-universal-simulator
+```
+
+Remove generated build output with:
+
+```bash
+./scripts/clean_build.sh
+```
+
+See [build/README.md](build/README.md) for packaging details and prerequisites.
+
+---
+
 ## License
 
 MIT License
