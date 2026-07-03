@@ -5,45 +5,83 @@ from ui.tag_manager import get_dashboard_tags
 
 DASHBOARD_REFRESH_MS = 500
 TAG_COLUMNS = 4
+COLOR_DASHBOARD = "#0f1720"
+COLOR_CARD = "#182431"
+COLOR_CARD_BORDER = "#334155"
+COLOR_MUTED = "#8fa3b8"
+COLOR_CYAN = "#22d3ee"
+COLOR_GREEN = "#22c55e"
+COLOR_RED = "#ef4444"
+COLOR_AMBER = "#f59e0b"
 
 
 def create_dashboard_tab(app):
-    app.dashboard_frame = ctk.CTkFrame(app.tab_dashboard)
+    app.dashboard_frame = ctk.CTkFrame(
+        app.tab_dashboard,
+        fg_color=COLOR_DASHBOARD,
+        corner_radius=10,
+    )
     app.dashboard_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
     title = ctk.CTkLabel(
         app.dashboard_frame,
-        text="PLC Simulator Dashboard",
-        font=("Arial", 28, "bold")
+        text="OPERATIONS OVERVIEW",
+        font=("Arial", 26, "bold"),
+        text_color="#dbeafe",
     )
-    title.pack(pady=20)
+    title.pack(pady=(18, 2))
 
-    system_frame = ctk.CTkFrame(app.dashboard_frame)
+    ctk.CTkLabel(
+        app.dashboard_frame,
+        text="LIVE PROCESS STATUS  •  RUNTIME TAG MONITOR",
+        font=("Arial", 11, "bold"),
+        text_color=COLOR_MUTED,
+    ).pack(pady=(0, 12))
+
+    system_frame = ctk.CTkFrame(app.dashboard_frame, fg_color="transparent")
     system_frame.pack(fill="x", padx=20, pady=(10, 5))
 
-    app.card_connection = create_card(system_frame, "Comunicação", "● Offline", "red", 0)
-    app.card_alarm = create_card(system_frame, "Alarmes", "0 ativos", "lime", 1)
-    app.card_pid = create_card(system_frame, "PID", "OFF", "gray", 2)
-    app.card_brand = create_card(system_frame, "PLC", "Siemens", "white", 3)
-    app.card_ip = create_card(system_frame, "IP", "192.168.1.10", "white", 4)
+    app.card_connection = create_card(
+        system_frame, "COMMUNICATION", "● OFFLINE", COLOR_RED, 0,
+        accent=COLOR_RED,
+    )
+    app.card_alarm = create_card(
+        system_frame, "ALARMS", "NORMAL", COLOR_GREEN, 1,
+        accent=COLOR_GREEN,
+    )
+    app.card_pid = create_card(
+        system_frame, "PID CONTROLLER", "OFF", COLOR_MUTED, 2,
+    )
+    app.card_brand = create_card(
+        system_frame, "PLC PLATFORM", "Siemens", "white", 3,
+    )
+    app.card_ip = create_card(
+        system_frame, "TARGET IP", "192.168.1.10", "white", 4,
+    )
 
-    activity_frame = ctk.CTkFrame(app.dashboard_frame)
+    activity_frame = ctk.CTkFrame(app.dashboard_frame, fg_color="transparent")
     activity_frame.pack(fill="x", padx=20, pady=5)
     app.card_last = create_card(
         activity_frame,
-        "Último estado",
-        "Aguardando...",
-        "gray",
+        "EVENT LOG",
+        "Waiting for activity...",
+        COLOR_MUTED,
         0,
+        accent="#3b82f6",
     )
 
     ctk.CTkLabel(
         app.dashboard_frame,
-        text="Tags",
+        text="PROCESS TAGS",
         font=("Arial", 20, "bold"),
+        text_color="#dbeafe",
     ).pack(anchor="w", padx=25, pady=(15, 5))
 
-    app.dashboard_tags_frame = ctk.CTkScrollableFrame(app.dashboard_frame)
+    app.dashboard_tags_frame = ctk.CTkScrollableFrame(
+        app.dashboard_frame,
+        fg_color="#111c27",
+        corner_radius=10,
+    )
     app.dashboard_tags_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
     app.dashboard_tag_cards = {}
     app.dashboard_tag_signature = None
@@ -55,28 +93,59 @@ def create_dashboard_tab(app):
     )
 
 
-def create_card(parent, title, value, color, column, row=0):
-    card = ctk.CTkFrame(parent, corner_radius=15)
-    card.grid(row=row, column=column, padx=12, pady=12, sticky="nsew")
+def create_card(
+    parent,
+    title,
+    value,
+    color,
+    column,
+    row=0,
+    accent=COLOR_CARD_BORDER,
+    subtitle=None,
+):
+    card = ctk.CTkFrame(
+        parent,
+        corner_radius=10,
+        fg_color=COLOR_CARD,
+        border_width=2,
+        border_color=accent,
+    )
+    card.grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
 
     parent.grid_columnconfigure(column, weight=1)
 
     ctk.CTkLabel(
         card,
         text=title,
-        font=("Arial", 15),
-        text_color="gray"
-    ).pack(pady=(18, 5))
+        font=("Arial", 12, "bold"),
+        text_color=COLOR_MUTED,
+    ).pack(pady=(14, 3))
 
     value_label = ctk.CTkLabel(
         card,
         text=value,
-        font=("Arial", 24, "bold"),
-        text_color=color
+        font=("Arial", 22, "bold"),
+        text_color=color,
     )
-    value_label.pack(pady=(5, 18))
+    value_label.pack(pady=(3, 4 if subtitle else 14))
+
+    if subtitle:
+        ctk.CTkLabel(
+            card,
+            text=subtitle,
+            font=("Arial", 10),
+            text_color=COLOR_MUTED,
+        ).pack(pady=(0, 10))
+
+    value_label.card_frame = card
 
     return value_label
+
+
+def style_card(value_label, border_color):
+    card = getattr(value_label, "card_frame", None)
+    if card is not None:
+        card.configure(border_color=border_color)
 
 
 def refresh_dashboard(app):
@@ -115,11 +184,12 @@ def refresh_dashboard_tag_cards(app):
         initial_value = "● ---" if tag.data_type == "BOOL" else "---"
         label = create_card(
             app.dashboard_tags_frame,
-            tag.name,
+            tag.name.upper(),
             initial_value,
-            "gray",
+            COLOR_MUTED,
             column,
             row,
+            subtitle=f"{tag.data_type}  •  {tag.address}",
         )
         app.dashboard_tag_cards[tag.name] = label
 
@@ -132,9 +202,10 @@ def update_dashboard(app, last_message=None):
 
     connected = app.plc_service.is_connected()
     app.card_connection.configure(
-        text="● Online" if connected else "● Offline",
-        text_color="lime" if connected else "red",
+        text="● ONLINE" if connected else "● OFFLINE",
+        text_color=COLOR_GREEN if connected else COLOR_RED,
     )
+    style_card(app.card_connection, COLOR_GREEN if connected else COLOR_RED)
 
     app.card_brand.configure(text=app.brand_menu.get())
     app.card_ip.configure(text=app.ip_entry.get())
@@ -142,8 +213,9 @@ def update_dashboard(app, last_message=None):
     pid_running = getattr(app, "pid_running", False)
     app.card_pid.configure(
         text="ON" if pid_running else "OFF",
-        text_color="lime" if pid_running else "gray",
+        text_color=COLOR_GREEN if pid_running else COLOR_MUTED,
     )
+    style_card(app.card_pid, COLOR_GREEN if pid_running else COLOR_CARD_BORDER)
 
     active_alarms = sum(
         1 for alarm in getattr(app, "alarms", [])
@@ -154,15 +226,16 @@ def update_dashboard(app, last_message=None):
         if alarm.get("active", False) and not alarm.get("ack", False)
     )
     if unacknowledged:
-        alarm_text = f"{active_alarms} ativos / {unacknowledged} ACK"
-        alarm_color = "red"
+        alarm_text = f"{unacknowledged} UNACK"
+        alarm_color = COLOR_RED
     elif active_alarms:
-        alarm_text = f"{active_alarms} ativos"
-        alarm_color = "orange"
+        alarm_text = f"{active_alarms} ACTIVE"
+        alarm_color = COLOR_AMBER
     else:
-        alarm_text = "0 ativos"
-        alarm_color = "lime"
+        alarm_text = "NORMAL"
+        alarm_color = COLOR_GREEN
     app.card_alarm.configure(text=alarm_text, text_color=alarm_color)
+    style_card(app.card_alarm, alarm_color)
 
     for tag in refresh_dashboard_tag_cards(app):
         label = app.dashboard_tag_cards[tag.name]
@@ -170,16 +243,20 @@ def update_dashboard(app, last_message=None):
 
         if runtime is None or not runtime.valid:
             text = "● ---" if tag.data_type == "BOOL" else "---"
-            color = "gray"
+            color = COLOR_MUTED
+            border_color = COLOR_CARD_BORDER
         elif tag.data_type == "BOOL":
             state = bool(runtime.value)
             text = "● ON" if state else "● OFF"
-            color = "lime" if state else "gray"
+            color = COLOR_GREEN if state else COLOR_MUTED
+            border_color = COLOR_GREEN if state else COLOR_CARD_BORDER
         else:
             text = str(runtime.value)
-            color = "cyan"
+            color = COLOR_CYAN
+            border_color = "#0e7490"
 
         label.configure(text=text, text_color=color)
+        style_card(label, border_color)
 
     if last_message:
         app.card_last.configure(text=last_message)

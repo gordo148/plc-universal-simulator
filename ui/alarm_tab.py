@@ -1,6 +1,7 @@
 import time
 import customtkinter as ctk
 
+from ui.header import update_top_status_bar
 from ui.tag_manager import get_alarm_tags
 
 
@@ -164,6 +165,7 @@ def create_alarm_row(app, alarm):
 def acknowledge_alarm(app, alarm):
     alarm["ack"] = True
     update_alarm_table(app)
+    update_alarm_status(app)
 
 
 def get_alarm_value(app, source):
@@ -283,3 +285,5 @@ def update_alarm_status(app):
             text="Alarmes: 0 ativos",
             text_color="lime"
         )
+
+    update_top_status_bar(app)

@@ -3,7 +3,7 @@ import os
 from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
-from ui.header import SCHNEIDER_MODELS
+from ui.header import SCHNEIDER_MODELS, update_top_status_bar
 from ui.tag_manager import (
     get_numeric_tags,
     get_pid_output_tags,
@@ -433,6 +433,7 @@ def _update_project_title(app):
     file_path = getattr(app, "project_path", None)
     project_name = os.path.basename(file_path) if file_path else "Novo Projeto"
     app.app.title(f"PLC Simulator Universal — {project_name}")
+    update_top_status_bar(app)
 
 
 def _normalize_pid_address(address):
