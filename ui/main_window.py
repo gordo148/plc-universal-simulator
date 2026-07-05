@@ -35,6 +35,7 @@ from ui.tag_manager import (
     get_pid_output_tags,
     refresh_tag_table,
     update_tag_address_context,
+    update_csv_button_visibility,
 )
 from ui.feedback_tab import (
     create_feedback_tab,
@@ -245,6 +246,7 @@ class PLCSimulator:
         else:
             self.create_simulator_options()
 
+        update_csv_button_visibility(self)
         update_tag_address_context(self)
         self.generate_signals()
 

@@ -117,40 +117,47 @@ def create_tag_manager_tab(app):
         width=130
     ).pack(side="left", padx=5)
 
-    ctk.CTkButton(
+    app.tag_import_csv_button = ctk.CTkButton(
         controls,
         text="Import CSV",
         command=lambda: import_tags_csv(app),
         width=110,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_import_csv_button.pack(side="left", padx=5)
 
-    ctk.CTkButton(
+    app.tag_import_tia_csv_button = ctk.CTkButton(
         controls,
         text="Import TIA CSV",
         command=lambda: import_tia_csv(app),
         width=120,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_import_tia_csv_button.pack(side="left", padx=5)
 
-    ctk.CTkButton(
+    app.tag_import_schneider_csv_button = ctk.CTkButton(
         controls,
         text="Import Schneider CSV",
         command=lambda: import_schneider_csv(app),
         width=155,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_import_schneider_csv_button.pack(side="left", padx=5)
 
-    ctk.CTkButton(
+    app.tag_export_csv_button = ctk.CTkButton(
         controls,
         text="Export CSV",
         command=lambda: export_tags_csv(app),
         width=110,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_export_csv_button.pack(side="left", padx=5)
 
-    ctk.CTkButton(
+    app.tag_export_template_csv_button = ctk.CTkButton(
         controls,
         text="Exportar Template CSV",
         command=lambda: export_csv_template(app),
         width=165,
-    ).pack(side="left", padx=5)
+    )
+    app.tag_export_template_csv_button.pack(side="left", padx=5)
+
+    update_csv_button_visibility(app)
 
     app.tag_validation_label = ctk.CTkLabel(
         frame,
@@ -186,6 +193,24 @@ def create_tag_manager_tab(app):
 
     refresh_tag_table(app)
     update_tag_address_context(app)
+
+
+def update_csv_button_visibility(app):
+    """Show only the CSV vendor importer for the selected PLC brand."""
+    brand = app.brand_menu.get()
+    vendor_buttons = (
+        (app.tag_import_tia_csv_button, brand == "Siemens"),
+        (app.tag_import_schneider_csv_button, brand == "Schneider"),
+    )
+
+    for button, visible in vendor_buttons:
+        button.pack_forget()
+        if visible:
+            button.pack(
+                side="left",
+                padx=5,
+                before=app.tag_export_csv_button,
+            )
 
 
 def create_header_cell(parent, text, column, width):
