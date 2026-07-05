@@ -17,6 +17,9 @@ dist/
 # Logs
 *.log
 
+# Local application settings
+config/settings.json
+
 # macOS
 .DS_Store
 

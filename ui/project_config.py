@@ -1,5 +1,6 @@
 import copy
 import json
+import logging
 import os
 import tempfile
 from tkinter import filedialog, messagebox
@@ -27,6 +28,12 @@ SUPPORTED_BRANDS = (
     "Omron",
     "Simulator",
 )
+LOGGER = logging.getLogger(__name__)
+
+
+def _initial_project_directory(app):
+    settings = getattr(app, "settings", None)
+    return getattr(settings, "last_project_folder", "configs")
 
 
 def new_project(app):
@@ -39,6 +46,7 @@ def new_project(app):
     clear_dashboard_events(app)
     update_dashboard(app, "Novo projeto criado")
     app.status_label.configure(text="● NOVO PROJETO", text_color="lime")
+    LOGGER.info("New project created")
     return True
 
 
@@ -51,7 +59,7 @@ def save_project(app):
 
 def save_project_as(app):
     file_path = filedialog.asksaveasfilename(
-        initialdir="configs",
+        initialdir=_initial_project_directory(app),
         defaultextension=PROJECT_EXTENSION,
         filetypes=[("Simulator projects", f"*{PROJECT_EXTENSION}")],
         initialfile=f"project{PROJECT_EXTENSION}",
@@ -64,7 +72,7 @@ def save_project_as(app):
 
 def open_project(app):
     file_path = filedialog.askopenfilename(
-        initialdir="configs",
+        initialdir=_initial_project_directory(app),
         filetypes=[("Simulator projects", f"*{PROJECT_EXTENSION}")],
     )
     if not file_path:
@@ -81,7 +89,11 @@ def open_project_path(app, file_path):
             project = json.load(file)
         staged_project = _stage_project_data(project)
     except (OSError, json.JSONDecodeError, ValueError) as error:
-        messagebox.showerror("Erro ao abrir projeto", str(error))
+        LOGGER.exception("Project open failed: %s", file_path)
+        messagebox.showerror(
+            "Erro ao abrir projeto",
+            "Unable to open project. Check the file format and permissions.",
+        )
         return False
 
     current_project = _stage_project_data(build_project_data(app))
@@ -100,12 +112,40 @@ def open_project_path(app, file_path):
     app.project_path = file_path
     _update_project_title(app)
     app.status_label.configure(text="● PROJETO ABERTO", text_color="lime")
+    LOGGER.info("Project opened: %s", file_path)
     return True
 
 
 def build_project_data(app):
     brand = app.brand_menu.get()
-    output_tag = get_tag_by_name(app, app.pid_out_menu.get())
+    pid_settings = {
+        "sp": "10000",
+        "sp_source": "Manual",
+        "pv_source": "",
+        "out_source": "",
+        "out_address": "",
+        "kp": "1.0",
+        "ki": "0.0",
+        "kd": "0.0",
+        "out_min": "0",
+        "out_max": "27648",
+        "interval_ms": "500",
+    }
+    if hasattr(app, "pid_out_menu"):
+        output_tag = get_tag_by_name(app, app.pid_out_menu.get())
+        pid_settings = {
+            "sp": app.pid_sp_entry.get(),
+            "sp_source": app.pid_sp_source_menu.get(),
+            "pv_source": app.pid_pv_menu.get(),
+            "out_source": app.pid_out_menu.get(),
+            "out_address": output_tag.address if output_tag else "",
+            "kp": app.pid_kp_entry.get(),
+            "ki": app.pid_ki_entry.get(),
+            "kd": app.pid_kd_entry.get(),
+            "out_min": app.pid_out_min_entry.get(),
+            "out_max": app.pid_out_max_entry.get(),
+            "interval_ms": app.pid_interval_entry.get(),
+        }
 
     connection = {
         "brand": brand,
@@ -190,19 +230,7 @@ def build_project_data(app):
             "digital_inputs": digital_inputs,
         },
         "alarms": alarms,
-        "pid": {
-            "sp": app.pid_sp_entry.get(),
-            "sp_source": app.pid_sp_source_menu.get(),
-            "pv_source": app.pid_pv_menu.get(),
-            "out_source": app.pid_out_menu.get(),
-            "out_address": output_tag.address if output_tag else "",
-            "kp": app.pid_kp_entry.get(),
-            "ki": app.pid_ki_entry.get(),
-            "kd": app.pid_kd_entry.get(),
-            "out_min": app.pid_out_min_entry.get(),
-            "out_max": app.pid_out_max_entry.get(),
-            "interval_ms": app.pid_interval_entry.get(),
-        },
+        "pid": pid_settings,
         "trends": {
             "enabled_tags": [
                 tag.name for tag in getattr(app, "tags", [])
@@ -256,12 +284,17 @@ def _write_project(app, file_path):
                 os.unlink(temporary_path)
             except OSError:
                 pass
-        messagebox.showerror("Erro ao guardar projeto", str(error))
+        LOGGER.exception("Project save failed: %s", file_path)
+        messagebox.showerror(
+            "Erro ao guardar projeto",
+            "Unable to save project. Check the folder permissions.",
+        )
         return False
 
     app.project_path = file_path
     _update_project_title(app)
     app.status_label.configure(text="● PROJETO GUARDADO", text_color="lime")
+    LOGGER.info("Project saved: %s", file_path)
     return True
 
 
@@ -305,6 +338,8 @@ def _apply_project_data(app, project, show_error=True):
         _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
         _restore_connection_settings(app, brand, plc.get("settings", {}))
 
+        if hasattr(app, "ensure_tag_manager_tab"):
+            app.ensure_tag_manager_tab()
         refresh_tag_table(app)
         app.generate_signals()
 
@@ -313,7 +348,11 @@ def _apply_project_data(app, project, show_error=True):
             project.get("runtime_settings", {}).get("digital_inputs", []),
         )
         _restore_analog_profiles(app, project.get("analog_profiles", []))
+        if hasattr(app, "ensure_pid_tab"):
+            app.ensure_pid_tab()
         _restore_pid(app, project.get("pid", {}))
+        if hasattr(app, "ensure_alarm_tab"):
+            app.ensure_alarm_tab()
         reload_alarms(app, project.get("alarms", []))
         _restore_trends(app, project.get("trends", {}))
 
@@ -322,8 +361,12 @@ def _apply_project_data(app, project, show_error=True):
         update_dashboard(app, "Projeto carregado")
         return True
     except Exception as error:
+        LOGGER.exception("Project apply failed")
         if show_error:
-            messagebox.showerror("Erro ao aplicar projeto", str(error))
+            messagebox.showerror(
+                "Erro ao aplicar projeto",
+                "Unable to apply project settings. The previous project was restored.",
+            )
         return False
 
 

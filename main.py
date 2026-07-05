@@ -2,13 +2,25 @@ import logging
 import sys
 import time
 
+from services.logger_service import configure_logging
 
 STARTUP_STARTED = time.perf_counter()
+LOGGER = configure_logging()
 
 from ui.main_window import PLCSimulator  # noqa: E402
 
 
 LOGGER = logging.getLogger("plc_universal_simulator.startup")
+
+
+def _log_unexpected_exception(exception_type, exception, traceback):
+    if issubclass(exception_type, KeyboardInterrupt):
+        sys.__excepthook__(exception_type, exception, traceback)
+        return
+    LOGGER.critical(
+        "Unexpected application exception",
+        exc_info=(exception_type, exception, traceback),
+    )
 
 
 def _log_startup_metrics():
@@ -32,10 +44,11 @@ def _log_startup_metrics():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    simulator = PLCSimulator()
-    _log_startup_metrics()
-    simulator.run()
+    sys.excepthook = _log_unexpected_exception
+    LOGGER.info("Application startup")
+    try:
+        simulator = PLCSimulator()
+        _log_startup_metrics()
+        simulator.run()
+    finally:
+        LOGGER.info("Application shutdown")

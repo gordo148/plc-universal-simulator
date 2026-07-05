@@ -1,5 +1,6 @@
 import csv
 import customtkinter as ctk
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -8,6 +9,12 @@ from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
 from ui.scrollable_frame import SafeScrollableFrame
+
+
+LOGGER = logging.getLogger(__name__)
+CSV_FORMAT_ERROR = "CSV format invalid. Check required columns."
+CSV_READ_ERROR = "Unable to read CSV file. Check file path and permissions."
+CSV_EXPORT_ERROR = "Unable to export CSV. Check file path and permissions."
 
 
 COL_WIDTHS = {
@@ -963,7 +970,11 @@ def import_tags_csv(app):
     try:
         imported_tags = read_tags_csv(file_path, app.brand_menu.get())
     except (OSError, ValueError) as error:
-        messagebox.showerror("Erro Import CSV", str(error))
+        LOGGER.warning("Universal CSV import failed: %s", error)
+        messagebox.showerror(
+            "Erro Import CSV",
+            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+        )
         return
 
     apply_imported_tags(
@@ -985,7 +996,11 @@ def import_tia_csv(app):
     try:
         imported_tags = read_tia_tags_csv(file_path)
     except (OSError, ValueError) as error:
-        messagebox.showerror("Erro Import TIA CSV", str(error))
+        LOGGER.warning("TIA CSV import failed: %s", error)
+        messagebox.showerror(
+            "Erro Import TIA CSV",
+            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+        )
         return
 
     apply_imported_tags(
@@ -1011,7 +1026,11 @@ def import_schneider_csv(app):
     try:
         imported_tags = read_schneider_tags_csv(file_path)
     except (OSError, ValueError) as error:
-        messagebox.showerror("Erro Import Schneider CSV", str(error))
+        LOGGER.warning("Schneider CSV import failed: %s", error)
+        messagebox.showerror(
+            "Erro Import Schneider CSV",
+            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+        )
         return
 
     apply_imported_tags(
@@ -1034,7 +1053,8 @@ def apply_imported_tags(
         imported_tags
     )
     if not names_valid:
-        messagebox.showerror(error_title, names_message)
+        LOGGER.warning("CSV import validation failed: %s", names_message)
+        messagebox.showerror(error_title, CSV_FORMAT_ERROR)
         return False
 
     previous_tags = app.tags
@@ -1057,6 +1077,7 @@ def apply_imported_tags(
         else:
             app.generate_signals()
     except Exception as error:
+        LOGGER.exception("CSV import could not be applied")
         app.tags = previous_tags
         refresh_tag_table(app)
         if brand_changed:
@@ -1064,13 +1085,14 @@ def apply_imported_tags(
             app.update_brand(previous_brand)
         else:
             app.generate_signals()
-        messagebox.showerror(error_title, str(error))
+        messagebox.showerror(error_title, CSV_FORMAT_ERROR)
         return False
 
     app.status_label.configure(
         text=success_text,
         text_color="lime",
     )
+    LOGGER.info("CSV import completed: tags=%d", len(imported_tags))
     return True
 
 
@@ -1087,13 +1109,15 @@ def export_tags_csv(app):
     try:
         write_tags_csv(file_path, app.tags)
     except OSError as error:
-        messagebox.showerror("Erro Export CSV", str(error))
+        LOGGER.exception("Universal CSV export failed: %s", file_path)
+        messagebox.showerror("Erro Export CSV", CSV_EXPORT_ERROR)
         return
 
     app.status_label.configure(
         text=f"● {len(app.tags)} TAGS EXPORTADAS",
         text_color="lime",
     )
+    LOGGER.info("Universal CSV exported: %s", file_path)
 
 
 def get_csv_template_path(brand):
@@ -1127,13 +1151,15 @@ def export_csv_template(app):
     try:
         shutil.copyfile(template_path, destination_path)
     except OSError as error:
-        messagebox.showerror("Erro Exportar Template CSV", str(error))
+        LOGGER.exception("CSV template export failed: %s", destination_path)
+        messagebox.showerror("Erro Exportar Template CSV", CSV_EXPORT_ERROR)
         return
 
     app.status_label.configure(
         text=f"● TEMPLATE CSV EXPORTADO: {destination_path.name}",
         text_color="lime",
     )
+    LOGGER.info("CSV template exported: %s", destination_path)
 
 
 def refresh_tag_table(app):

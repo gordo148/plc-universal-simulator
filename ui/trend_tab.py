@@ -1,12 +1,16 @@
 import csv
+import logging
 import math
 import time
 import customtkinter as ctk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from ui.tag_manager import get_trend_tags
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 COLORS = [
@@ -238,16 +242,25 @@ def export_csv(app):
         if name in enabled_names
     ]
 
-    with open(file_path, "w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["time_s"] + tag_names)
+    try:
+        with open(file_path, "w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["time_s"] + tag_names)
 
-        for index, elapsed in enumerate(app.trend_data["time"]):
-            row = [elapsed]
-            for name in tag_names:
-                values = app.trend_data["tags"].get(name, [])
-                value = values[index] if index < len(values) else ""
-                row.append(_csv_value(value))
-            writer.writerow(row)
+            for index, elapsed in enumerate(app.trend_data["time"]):
+                row = [elapsed]
+                for name in tag_names:
+                    values = app.trend_data["tags"].get(name, [])
+                    value = values[index] if index < len(values) else ""
+                    row.append(_csv_value(value))
+                writer.writerow(row)
+    except OSError:
+        LOGGER.exception("Trend CSV export failed: %s", file_path)
+        messagebox.showerror(
+            "Erro Export CSV",
+            "Unable to export CSV. Check file path and permissions.",
+        )
+        return
 
     app.status_label.configure(text="● TREND EXPORTADA", text_color="lime")
+    LOGGER.info("Trend CSV exported: %s", file_path)

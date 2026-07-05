@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import os
+from pathlib import Path
 import re
+import sys
 import tempfile
 
 
@@ -15,12 +17,11 @@ _WINDOW_SIZE_RE = re.compile(r"^\d{3,5}x\d{3,5}$")
 
 
 def default_settings_path():
-    base = os.environ.get("XDG_CONFIG_HOME")
-    if not base and os.name == "nt":
-        base = os.environ.get("APPDATA")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "plc-universal-simulator", "settings.json")
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent.parent
+    return str(base / "config" / "settings.json")
 
 
 @dataclass
@@ -30,6 +31,10 @@ class ApplicationSettings:
     last_project_path: str | None = None
     window_size: str = DEFAULT_WINDOW_SIZE
     recent_projects: list[str] = field(default_factory=list)
+    last_project_folder: str = "configs"
+    ui_preferences: dict = field(
+        default_factory=lambda: {"appearance_mode": "dark"}
+    )
 
     @classmethod
     def load(cls, path=None):
@@ -62,7 +67,28 @@ class ApplicationSettings:
                     recent.append(item)
                 if len(recent) == 5:
                     break
-        return cls(brand, ip, last, size, recent)
+        project_folder = data.get("last_project_folder", "configs")
+        if not isinstance(project_folder, str) or not project_folder:
+            project_folder = "configs"
+        ui_preferences = data.get(
+            "ui_preferences",
+            {"appearance_mode": "dark"},
+        )
+        if not isinstance(ui_preferences, dict):
+            ui_preferences = {"appearance_mode": "dark"}
+        appearance_mode = ui_preferences.get("appearance_mode", "dark")
+        if appearance_mode not in ("dark", "light", "system"):
+            appearance_mode = "dark"
+        ui_preferences = {"appearance_mode": appearance_mode}
+        return cls(
+            brand,
+            ip,
+            last,
+            size,
+            recent,
+            project_folder,
+            ui_preferences,
+        )
 
     def add_recent_project(self, path):
         normalized = os.path.abspath(os.path.expanduser(path))
@@ -71,6 +97,7 @@ class ApplicationSettings:
         ]
         self.recent_projects = self.recent_projects[:5]
         self.last_project_path = normalized
+        self.last_project_folder = os.path.dirname(normalized)
 
     def save(self, path=None):
         settings_path = path or default_settings_path()
@@ -82,6 +109,8 @@ class ApplicationSettings:
             "last_project_path": self.last_project_path,
             "window_size": self.window_size,
             "recent_projects": self.recent_projects[:5],
+            "last_project_folder": self.last_project_folder,
+            "ui_preferences": self.ui_preferences,
         }
         descriptor, temporary_path = tempfile.mkstemp(prefix=".settings-", suffix=".tmp", dir=directory)
         try:

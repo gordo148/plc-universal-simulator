@@ -1,6 +1,7 @@
 import json
+from pathlib import Path
 
-from services.settings_service import ApplicationSettings
+from services.settings_service import ApplicationSettings, default_settings_path
 from ui.main_window import PLCSimulator
 
 
@@ -12,12 +13,21 @@ def test_application_settings_round_trip(tmp_path):
         last_project_path="/projects/line.simproject",
         window_size="1280x800",
         recent_projects=["/projects/line.simproject"],
+        last_project_folder="/projects",
+        ui_preferences={"appearance_mode": "light"},
     )
 
     settings.save(path)
     loaded = ApplicationSettings.load(path)
 
     assert loaded == settings
+
+
+def test_default_settings_path_uses_project_config_directory():
+    assert Path(default_settings_path()).parts[-2:] == (
+        "config",
+        "settings.json",
+    )
 
 
 def test_corrupted_settings_use_defaults(tmp_path):
@@ -38,6 +48,7 @@ def test_recent_projects_are_unique_and_limited_to_five(tmp_path):
     assert settings.recent_projects[0] == str(paths[3])
     assert len(set(settings.recent_projects)) == 5
     assert settings.last_project_path == str(paths[3])
+    assert settings.last_project_folder == str(tmp_path)
 
 
 def test_invalid_saved_preferences_are_sanitized(tmp_path):

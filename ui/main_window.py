@@ -1,5 +1,7 @@
 import os
 import logging
+import platform
+import sys
 import time
 import customtkinter as ctk
 from tkinter import messagebox
@@ -50,6 +52,29 @@ ctk.set_default_color_theme("blue")
 LOGGER = logging.getLogger(__name__)
 APP_VERSION = "2.2"
 NO_RECENT_PROJECTS = "Nenhum projeto recente"
+AVAILABLE_PLC_DRIVERS = (
+    "Siemens S7",
+    "Schneider Modbus TCP",
+    "Generic Modbus TCP",
+    "Rockwell EtherNet/IP",
+    "Omron FINS",
+    "Internal Simulator",
+)
+
+
+def get_about_text():
+    build_type = "Packaged desktop build" if getattr(sys, "frozen", False) else "Source build"
+    drivers = "\n".join(f"  • {driver}" for driver in AVAILABLE_PLC_DRIVERS)
+    return (
+        "PLC Universal Simulator\n"
+        "Version: v2.2 Stable\n"
+        f"Build type: {build_type}\n"
+        f"Python: {platform.python_version()}\n"
+        f"Operating system: {platform.system()} {platform.release()}\n\n"
+        "Available PLC drivers:\n"
+        f"{drivers}\n\n"
+        "Plugin support: Dormant / opt-in (automatic loading disabled)"
+    )
 
 
 class PLCSimulator:
@@ -57,9 +82,13 @@ class PLCSimulator:
         os.makedirs("configs", exist_ok=True)
 
         self.settings = ApplicationSettings.load()
+        ctk.set_appearance_mode(
+            self.settings.ui_preferences.get("appearance_mode", "dark")
+        )
 
         self.tag_runtime = RuntimeTagCache()
         self.plc_service = PLCService(runtime_cache=self.tag_runtime)
+        self.tags = []
         self.digital_states = {}
         self.digital_controls = []
         self.digital_tags = []
@@ -70,6 +99,11 @@ class PLCSimulator:
         self.analog_profile_running = {}
         self.project_path = None
         self._trend_initialized = False
+        self._dashboard_initialized = False
+        self._tag_manager_initialized = False
+        self._feedback_initialized = False
+        self._pid_initialized = False
+        self._alarm_initialized = False
 
         self.cyclic_read_enabled = False
 
@@ -79,6 +113,7 @@ class PLCSimulator:
         self.pid_last_time = time.time()
 
         self.app = ctk.CTk()
+        self.app.report_callback_exception = self._report_callback_exception
         self.app.title("PLC Simulator Universal — Novo Projeto")
         self.app.geometry(self.settings.window_size)
         self.app.minsize(1200, 750)
@@ -92,6 +127,7 @@ class PLCSimulator:
         self.update_brand(self.settings.plc_brand)
         self.refresh_recent_projects()
         self._mark_project_saved()
+        self.app.after_idle(self.ensure_dashboard_tab)
 
     def create_header(self):
         create_header(self)
@@ -112,22 +148,56 @@ class PLCSimulator:
         self.tab_alarms = self.tabs.add("Alarmes")
         self.tab_feedbacks = self.tabs.add("Feedbacks")
 
-        create_dashboard_tab(self)
-        create_tag_manager_tab(self)
-        create_feedback_tab(self)
-
         self.digital_scroll = SafeScrollableFrame(self.tab_digital)
         self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.analog_scroll = SafeScrollableFrame(self.tab_analog)
         self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.create_pid_tab()
-        create_alarm_tab(self)
-
     def _on_tab_changed(self):
-        if self.tabs.get() == "Trends":
+        selected_tab = self.tabs.get()
+        if selected_tab == "Dashboard":
+            self.ensure_dashboard_tab()
+        elif selected_tab == "Tag Manager":
+            self.ensure_tag_manager_tab()
+        elif selected_tab == "Feedbacks":
+            self.ensure_feedback_tab()
+        elif selected_tab == "PID":
+            self.ensure_pid_tab()
+        elif selected_tab == "Alarmes":
+            self.ensure_alarm_tab()
+        elif selected_tab == "Trends":
             self.ensure_trend_tab()
+
+    def ensure_dashboard_tab(self):
+        if self._dashboard_initialized:
+            return
+        create_dashboard_tab(self)
+        self._dashboard_initialized = True
+
+    def ensure_tag_manager_tab(self):
+        if self._tag_manager_initialized:
+            return
+        create_tag_manager_tab(self)
+        self._tag_manager_initialized = True
+
+    def ensure_feedback_tab(self):
+        if self._feedback_initialized:
+            return
+        create_feedback_tab(self)
+        self._feedback_initialized = True
+
+    def ensure_pid_tab(self):
+        if self._pid_initialized:
+            return
+        create_pid_tab(self)
+        self._pid_initialized = True
+
+    def ensure_alarm_tab(self):
+        if self._alarm_initialized:
+            return
+        create_alarm_tab(self)
+        self._alarm_initialized = True
 
     def ensure_trend_tab(self):
         if self._trend_initialized:
@@ -142,9 +212,6 @@ class PLCSimulator:
             from ui.project_config import _restore_trends
 
             _restore_trends(self, pending)
-
-    def create_pid_tab(self):
-        create_pid_tab(self)
 
     def write_pid_output(self, value):
         return pid_write_output(self, value)
@@ -205,9 +272,13 @@ class PLCSimulator:
             else:
                 self.status_label.configure(text="● ERRO LIGAÇÃO", text_color="orange")
 
-        except Exception as e:
+        except Exception:
+            LOGGER.exception("PLC connection failed for brand %s", brand)
             self.status_label.configure(text="● ERRO", text_color="orange")
-            messagebox.showerror("Erro de ligação", str(e))
+            messagebox.showerror(
+                "Connection error",
+                "Unable to connect to PLC. Check IP address and network.",
+            )
 
     def disconnect(self):
         self.cyclic_read_enabled = False
@@ -250,7 +321,8 @@ class PLCSimulator:
         else:
             self.create_simulator_options()
 
-        update_csv_button_visibility(self)
+        if hasattr(self, "tag_import_tia_csv_button"):
+            update_csv_button_visibility(self)
         update_tag_address_context(self)
         self.generate_signals()
 
@@ -637,6 +709,7 @@ class PLCSimulator:
         size = self.app.geometry().split("+", 1)[0]
         if "x" in size:
             self.settings.window_size = size
+        self.settings.ui_preferences["appearance_mode"] = ctk.get_appearance_mode().lower()
         try:
             self.settings.save()
         except OSError as error:
@@ -649,10 +722,22 @@ class PLCSimulator:
         ):
             return
         self._save_settings()
+        self.plc_service.disconnect()
+        LOGGER.info("Application window closed")
         self.app.destroy()
 
     def show_about(self):
-        messagebox.showinfo("About", f"PLC Universal Simulator v{APP_VERSION}")
+        messagebox.showinfo("About", get_about_text())
+
+    def _report_callback_exception(self, exception_type, exception, traceback):
+        LOGGER.critical(
+            "Unexpected UI callback exception",
+            exc_info=(exception_type, exception, traceback),
+        )
+        messagebox.showerror(
+            "Unexpected error",
+            "An unexpected error occurred. Details were written to the application log.",
+        )
 
     def run(self):
         self.app.mainloop()

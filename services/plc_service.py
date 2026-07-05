@@ -36,7 +36,11 @@ _DRIVER_IMPORTS = {
 def _driver_class(class_name):
     driver_class = globals()[class_name]
     if driver_class is None:
-        module = import_module(_DRIVER_IMPORTS[class_name])
+        try:
+            module = import_module(_DRIVER_IMPORTS[class_name])
+        except ImportError:
+            LOGGER.exception("PLC driver import failed: %s", class_name)
+            raise
         driver_class = getattr(module, class_name)
         globals()[class_name] = driver_class
     return driver_class
@@ -63,6 +67,7 @@ class PLCService:
 
     def connect(self, brand: str, ip: str, **options) -> bool:
         self.disconnect()
+        LOGGER.info("PLC connection requested: brand=%s", brand)
 
         if brand == "Siemens":
             driver = _driver_class("SiemensS7Driver")()
@@ -110,6 +115,7 @@ class PLCService:
         try:
             connected = bool(driver.connect(*connect_args))
         except Exception:
+            LOGGER.exception("PLC driver connection failed: brand=%s", brand)
             try:
                 driver.disconnect()
             except Exception:
@@ -117,6 +123,7 @@ class PLCService:
             raise
 
         if not connected:
+            LOGGER.warning("PLC connection rejected: brand=%s", brand)
             try:
                 driver.disconnect()
             except Exception:
@@ -125,10 +132,12 @@ class PLCService:
 
         self._driver = driver
         self._brand = brand
+        LOGGER.info("PLC connected: brand=%s", brand)
         return True
 
     def disconnect(self) -> None:
         driver = self._driver
+        brand = self._brand
         self._driver = None
         self._brand = None
         self.runtime_cache.invalidate_source(RuntimeValueSource.PLC)
@@ -138,6 +147,8 @@ class PLCService:
                 driver.disconnect()
             except Exception:
                 LOGGER.exception("PLC disconnect failed")
+            else:
+                LOGGER.info("PLC disconnected: brand=%s", brand)
 
     def is_connected(self) -> bool:
         if self._driver is None:

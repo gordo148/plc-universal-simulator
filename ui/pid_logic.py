@@ -1,5 +1,9 @@
+import logging
 import time
 from tkinter import messagebox
+
+
+LOGGER = logging.getLogger(__name__)
 
 from core.tag_runtime import RuntimeValueSource
 from ui.dashboard_tab import update_dashboard
@@ -113,6 +117,10 @@ def run_pid_loop(app):
         app.app.after(interval_ms, lambda: run_pid_loop(app))
 
     except Exception as error:
+        LOGGER.exception("PID execution failed")
         app.pid_status_label.configure(text="PID ERRO", text_color="orange")
-        messagebox.showerror("Erro PID", str(error))
+        messagebox.showerror(
+            "Erro PID",
+            "Unable to run PID. Check the configured sources and numeric values.",
+        )
         stop_pid(app)
