@@ -1,0 +1,8 @@
+name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard
+BOOL_Input,BOOL,Input,%M0,1,1,0,1
+INT_Input,INT,Input,%MW0,1,1,0,1
+REAL_Input,REAL,Input,%MW1,1,1,0,1
+BOOL_Feedback,BOOL,Feedback,%M1,0,1,0,1
+INT_Feedback,INT,Feedback,%MW3,0,1,0,1
+REAL_Feedback,REAL,Feedback,%MW4,0,1,0,1
+PID_OUT,REAL,Internal,%MW6,0,1,0,1

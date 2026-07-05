@@ -1,6 +1,9 @@
 import csv
 import customtkinter as ctk
+from pathlib import Path
 import re
+import shutil
+import sys
 from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
@@ -31,6 +34,15 @@ TAG_CSV_FIELDS = [
 
 TRUE_CSV_VALUES = {"1", "true", "yes"}
 FALSE_CSV_VALUES = {"0", "false", "no"}
+
+TEMPLATE_FILENAMES = {
+    "Siemens": "siemens_tags_template.csv",
+    "Schneider": "schneider_tags_template.csv",
+    "Rockwell": "rockwell_tags_template.csv",
+    "Omron": "omron_tags_template.csv",
+    "Modbus TCP": "modbus_tcp_tags_template.csv",
+    "Simulator": "universal_tags_template.csv",
+}
 
 
 def create_tag_manager_tab(app):
@@ -131,6 +143,13 @@ def create_tag_manager_tab(app):
         text="Export CSV",
         command=lambda: export_tags_csv(app),
         width=110,
+    ).pack(side="left", padx=5)
+
+    ctk.CTkButton(
+        controls,
+        text="Exportar Template CSV",
+        command=lambda: export_csv_template(app),
+        width=165,
     ).pack(side="left", padx=5)
 
     app.tag_validation_label = ctk.CTkLabel(
@@ -1047,6 +1066,46 @@ def export_tags_csv(app):
 
     app.status_label.configure(
         text=f"● {len(app.tags)} TAGS EXPORTADAS",
+        text_color="lime",
+    )
+
+
+def get_csv_template_path(brand):
+    """Return the bundled CSV template for a PLC brand."""
+    filename = TEMPLATE_FILENAMES.get(
+        str(brand).strip(),
+        "universal_tags_template.csv",
+    )
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent))
+    return bundle_root / "templates" / filename
+
+
+def export_csv_template(app):
+    template_path = get_csv_template_path(app.brand_menu.get())
+    destination = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv")],
+        initialfile=template_path.name,
+        confirmoverwrite=False,
+    )
+    if not destination:
+        return
+
+    destination_path = Path(destination)
+    if destination_path.exists() and not messagebox.askyesno(
+        "Substituir Template CSV",
+        f"O ficheiro '{destination_path.name}' já existe. Substituir?",
+    ):
+        return
+
+    try:
+        shutil.copyfile(template_path, destination_path)
+    except OSError as error:
+        messagebox.showerror("Erro Exportar Template CSV", str(error))
+        return
+
+    app.status_label.configure(
+        text=f"● TEMPLATE CSV EXPORTADO: {destination_path.name}",
         text_color="lime",
     )
 

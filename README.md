@@ -30,6 +30,7 @@ vendor-specific interface.
 - High-high, high, low, and low-low alarms
 - PID simulation using runtime tags
 - Universal CSV import/export
+- Bundled universal and PLC-brand CSV templates
 - Siemens TIA Portal and Schneider CSV imports
 - Atomic `.simproject` save/load
 - Online PLC communication and offline signal simulation
@@ -160,6 +161,13 @@ Rules:
 
 Dedicated import commands are also available for Siemens TIA Portal and
 Schneider exports. Universal CSV export writes the current tag database.
+
+To create a new tag list, select the target PLC brand and choose **Exportar
+Template CSV**. Select a destination, edit the copied CSV with your tag names
+and addresses, then import it with **Import CSV**. Siemens, Schneider,
+Rockwell, Omron, and Modbus TCP use brand-specific example addresses;
+Simulator exports the universal template. Existing destination files are only
+replaced after confirmation.
 
 ## Project files
 

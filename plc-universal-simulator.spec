@@ -36,7 +36,7 @@ datas = [
     item
     for item in collect_data_files("customtkinter")
     if include_data_file(item)
-]
+] + [(os.path.join(project_root, "templates"), "templates")]
 hiddenimports = optional_submodules("customtkinter") + [
     "drivers.internal_simulator",
     "drivers.modbus_tcp",

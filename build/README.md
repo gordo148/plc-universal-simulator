@@ -51,8 +51,8 @@ preserving this documentation file.
 
 ## Package scope
 
-The specification includes application modules and runtime assets required by
-CustomTkinter. It does not bundle repository-only content such as tests,
+The specification includes application modules, the `templates/` CSV pack,
+and runtime assets required by CustomTkinter. It does not bundle repository-only content such as tests,
 documentation, screenshots, Git metadata, or Python cache directories.
 
 Optional protocol dependencies follow their existing runtime behavior. For
