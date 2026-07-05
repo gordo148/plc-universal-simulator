@@ -3,8 +3,9 @@ import logging
 import platform
 import sys
 import time
+from pathlib import Path
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import PhotoImage, TclError, messagebox
 
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 from services.plc_service import PLCService
@@ -62,6 +63,11 @@ AVAILABLE_PLC_DRIVERS = (
 )
 
 
+def get_application_icon_path():
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent))
+    return bundle_root / "assets" / "icon.png"
+
+
 def get_about_text():
     build_type = "Packaged desktop build" if getattr(sys, "frozen", False) else "Source build"
     drivers = "\n".join(f"  • {driver}" for driver in AVAILABLE_PLC_DRIVERS)
@@ -113,6 +119,7 @@ class PLCSimulator:
         self.pid_last_time = time.time()
 
         self.app = ctk.CTk()
+        self._set_application_icon()
         self.app.report_callback_exception = self._report_callback_exception
         self.app.title("PLC Simulator Universal — Novo Projeto")
         self.app.geometry(self.settings.window_size)
@@ -128,6 +135,13 @@ class PLCSimulator:
         self.refresh_recent_projects()
         self._mark_project_saved()
         self.app.after_idle(self.ensure_dashboard_tab)
+
+    def _set_application_icon(self):
+        try:
+            self._application_icon = PhotoImage(file=get_application_icon_path())
+            self.app.iconphoto(True, self._application_icon)
+        except (OSError, TclError):
+            LOGGER.warning("Unable to set application icon", exc_info=True)
 
     def create_header(self):
         create_header(self)
