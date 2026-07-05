@@ -44,12 +44,12 @@ def create_digital_row(app, index, tag):
 
     name_entry.bind("<KeyRelease>", lambda event, idx=index: app.update_digital_name(idx))
 
-    app.digital_widgets.append({
+    app.digital_controls.append({
         "led": led,
         "name_entry": name_entry,
         "button": button,
         "live": live,
         "mode_menu": mode_menu,
         "pulse_entry": pulse_entry,
-        "tag": tag
     })
+    app.digital_tags.append(tag)

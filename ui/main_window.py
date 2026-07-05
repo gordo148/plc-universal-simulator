@@ -42,6 +42,7 @@ from ui.feedback_tab import (
     refresh_feedback_table,
     update_feedback_values,
 )
+from ui.scrollable_frame import SafeScrollableFrame
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -60,9 +61,12 @@ class PLCSimulator:
         self.tag_runtime = RuntimeTagCache()
         self.plc_service = PLCService(runtime_cache=self.tag_runtime)
         self.digital_states = {}
-        self.digital_widgets = []
+        self.digital_controls = []
+        self.digital_tags = []
         self.pending_pulse_callbacks = {}
-        self.analog_widgets = []
+        self.analog_controls = []
+        self.analog_tags = []
+        self.analog_profile_directions = {}
         self.analog_profile_running = {}
         self.project_path = None
         self._trend_initialized = False
@@ -112,10 +116,10 @@ class PLCSimulator:
         create_tag_manager_tab(self)
         create_feedback_tab(self)
 
-        self.digital_scroll = ctk.CTkScrollableFrame(self.tab_digital)
+        self.digital_scroll = SafeScrollableFrame(self.tab_digital)
         self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.analog_scroll = ctk.CTkScrollableFrame(self.tab_analog)
+        self.analog_scroll = SafeScrollableFrame(self.tab_analog)
         self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.create_pid_tab()
@@ -274,9 +278,12 @@ class PLCSimulator:
             widget.destroy()
 
         self.digital_states.clear()
-        self.digital_widgets.clear()
-        self.analog_widgets.clear()
+        self.digital_controls.clear()
+        self.digital_tags.clear()
+        self.analog_controls.clear()
+        self.analog_tags.clear()
         self.analog_profile_running.clear()
+        self.analog_profile_directions.clear()
 
     def generate_signals(self):
         self.tag_runtime.sync(getattr(self, "tags", []))
@@ -347,13 +354,13 @@ class PLCSimulator:
         )
 
     def update_digital_name(self, index):
-        item = self.digital_widgets[index]
+        item = self.digital_controls[index]
         name = item["name_entry"].get()
         state = self.digital_states.get(index, False)
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
 
     def digital_action(self, index):
-        item = self.digital_widgets[index]
+        item = self.digital_controls[index]
         mode = item["mode_menu"].get()
 
         if mode == "Pulse":
@@ -362,8 +369,8 @@ class PLCSimulator:
             self.toggle_digital(index)
 
     def pulse_digital(self, index):
-        item = self.digital_widgets[index]
-        tag = item["tag"]
+        item = self.digital_controls[index]
+        tag = self.digital_tags[index]
 
         try:
             pulse_ms = int(item["pulse_entry"].get())
@@ -388,21 +395,21 @@ class PLCSimulator:
 
     def _finish_digital_pulse(self, tag):
         self.pending_pulse_callbacks.pop(id(tag), None)
-        for index, item in enumerate(self.digital_widgets):
-            if item["tag"] is tag:
+        for index, candidate in enumerate(self.digital_tags):
+            if candidate is tag:
                 self.write_digital_state(index, False)
                 return
 
     def toggle_digital(self, index):
-        item = self.digital_widgets[index]
+        tag = self.digital_tags[index]
         current_state = bool(
-            self.tag_runtime.get_value(item["tag"].name, False)
+            self.tag_runtime.get_value(tag.name, False)
         )
         new_state = not current_state
         self.write_digital_state(index, new_state)
 
     def write_digital_state(self, index, state):
-        item = self.digital_widgets[index]
+        tag = self.digital_tags[index]
 
         if not self.is_online():
             self.update_digital_ui(
@@ -416,11 +423,11 @@ class PLCSimulator:
             )
             update_dashboard(
                 self,
-                f"Digital {item['tag'].name} = {'ON' if state else 'OFF'} (simulation)",
+                f"Digital {tag.name} = {'ON' if state else 'OFF'} (simulation)",
             )
             return bool(state)
 
-        real_state = self.plc_service.write_bool(item["tag"], state)
+        real_state = self.plc_service.write_bool(tag, state)
 
         if real_state is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
@@ -433,23 +440,24 @@ class PLCSimulator:
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(
             self,
-            f"Digital {item['tag'].name} = {'ON' if real_state else 'OFF'} (PLC)",
+            f"Digital {tag.name} = {'ON' if real_state else 'OFF'} (PLC)",
         )
 
         return real_state
 
     def update_analog(self, index, value):
-        item = self.analog_widgets[index]
+        item = self.analog_controls[index]
+        tag = self.analog_tags[index]
 
         if item["profile_mode"].get() != "Manual":
-            current_value = self.tag_runtime.get_value(item["tag"].name, 0)
+            current_value = self.tag_runtime.get_value(tag.name, 0)
             item["slider"].set(current_value)
             return
 
         self.write_analog_by_index(index, int(float(value)))
 
     def write_analog_by_index(self, index, value):
-        item = self.analog_widgets[index]
+        tag = self.analog_tags[index]
 
         if not self.is_online():
             self.update_analog_ui(
@@ -463,11 +471,11 @@ class PLCSimulator:
             )
             update_dashboard(
                 self,
-                f"Process value {item['tag'].name} = {value} (simulation)",
+                f"Process value {tag.name} = {value} (simulation)",
             )
             return value
 
-        real_value = self.plc_service.write_numeric(item["tag"], value)
+        real_value = self.plc_service.write_numeric(tag, value)
 
         if real_value is None:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
@@ -480,7 +488,7 @@ class PLCSimulator:
         self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
         update_dashboard(
             self,
-            f"Process value {item['tag'].name} = {real_value} (PLC)",
+            f"Process value {tag.name} = {real_value} (PLC)",
         )
 
         return real_value
@@ -509,22 +517,23 @@ class PLCSimulator:
         self.app.after(500, self.start_cyclic_read)
 
     def update_runtime_widgets(self):
-        for index, item in enumerate(self.digital_widgets):
-            value = self.tag_runtime.get_value(item["tag"].name)
+        for index, tag in enumerate(self.digital_tags):
+            value = self.tag_runtime.get_value(tag.name)
             if value is not None:
                 self.update_digital_ui(index, bool(value))
 
-        for index, item in enumerate(self.analog_widgets):
-            value = self.tag_runtime.get_value(item["tag"].name)
+        for index, tag in enumerate(self.analog_tags):
+            value = self.tag_runtime.get_value(tag.name)
             if value is not None:
                 self.update_analog_ui(index, value)
 
     def update_digital_ui(self, index, state, source=None):
-        item = self.digital_widgets[index]
+        item = self.digital_controls[index]
+        tag = self.digital_tags[index]
 
         self.digital_states[index] = state
         if source is not None:
-            self.tag_runtime.update(item["tag"].name, state, source)
+            self.tag_runtime.update(tag.name, state, source)
         name = item["name_entry"].get()
 
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
@@ -532,10 +541,11 @@ class PLCSimulator:
         item["live"].configure(text="1" if state else "0")
 
     def update_analog_ui(self, index, value, source=None):
-        item = self.analog_widgets[index]
+        item = self.analog_controls[index]
+        tag = self.analog_tags[index]
 
         if source is not None:
-            self.tag_runtime.update(item["tag"].name, value, source)
+            self.tag_runtime.update(tag.name, value, source)
         item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")
         item["live"].configure(text=str(value))
@@ -551,10 +561,10 @@ class PLCSimulator:
 
         self.stop_pid()
 
-        for i, item in enumerate(self.digital_widgets):
+        for i, _item in enumerate(self.digital_controls):
             self.write_digital_state(i, False)
 
-        for i, item in enumerate(self.analog_widgets):
+        for i, _item in enumerate(self.analog_controls):
             self.write_analog_by_index(i, 0)
 
         self.status_label.configure(text="● RESET OK", text_color="lime")

@@ -3,6 +3,7 @@ import time
 import customtkinter as ctk
 
 from ui.tag_manager import get_dashboard_tags
+from ui.scrollable_frame import SafeScrollableFrame
 
 
 DASHBOARD_REFRESH_MS = 500
@@ -63,7 +64,7 @@ def create_dashboard_tab(app):
         1,
     )
 
-    app.dashboard_tags_frame = ctk.CTkScrollableFrame(
+    app.dashboard_tags_frame = SafeScrollableFrame(
         app.dashboard_frame,
         fg_color="#111c27",
         corner_radius=10,

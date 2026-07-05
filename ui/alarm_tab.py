@@ -4,6 +4,7 @@ import customtkinter as ctk
 from ui.header import update_top_status_bar
 from ui.dashboard_tab import record_dashboard_event
 from ui.tag_manager import get_alarm_tags
+from ui.scrollable_frame import SafeScrollableFrame
 
 
 def create_alarm_tab(app):
@@ -74,7 +75,7 @@ def create_alarm_tab(app):
             width=120
         ).grid(row=0, column=col, padx=4, pady=6)
 
-    app.alarm_table = ctk.CTkScrollableFrame(frame)
+    app.alarm_table = SafeScrollableFrame(frame)
     app.alarm_table.pack(fill="both", expand=True, padx=10, pady=10)
 
     update_alarm_sources(app)

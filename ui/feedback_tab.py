@@ -1,4 +1,6 @@
 import customtkinter as ctk
+
+from ui.scrollable_frame import SafeScrollableFrame
 from ui.tag_manager import get_feedback_tags
 
 
@@ -39,7 +41,7 @@ def create_feedback_tab(app):
             width=160
         ).grid(row=0, column=col, padx=4, pady=6)
 
-    app.feedback_table = ctk.CTkScrollableFrame(frame)
+    app.feedback_table = SafeScrollableFrame(frame)
     app.feedback_table.pack(fill="both", expand=True, padx=10, pady=10)
 
     refresh_feedback_table(app)

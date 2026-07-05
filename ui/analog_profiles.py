@@ -2,7 +2,7 @@ import random
 
 
 def start_profile(app, index):
-    item = app.analog_widgets[index]
+    item = app.analog_controls[index]
 
     mode = item["profile_mode"].get()
 
@@ -19,7 +19,7 @@ def start_profile(app, index):
 def stop_profile(app, index):
     app.analog_profile_running[index] = False
 
-    item = app.analog_widgets[index]
+    item = app.analog_controls[index]
     item["profile_status"].configure(text="STOP", text_color="gray")
 
 
@@ -27,7 +27,8 @@ def run_profile(app, index):
     if not app.analog_profile_running.get(index, False):
         return
 
-    item = app.analog_widgets[index]
+    item = app.analog_controls[index]
+    tag = app.analog_tags[index]
 
     try:
         mode = item["profile_mode"].get()
@@ -52,20 +53,20 @@ def run_profile(app, index):
         return
 
     current_value = int(
-        app.tag_runtime.get_value(item["tag"].name, 0)
+        app.tag_runtime.get_value(tag.name, 0)
     )
 
     if mode == "Ramp":
-        direction = item["direction"]
+        direction = app.analog_profile_directions[index]
         next_value = current_value + step * direction
 
         if next_value >= max_value:
             next_value = max_value
-            item["direction"] = -1
+            app.analog_profile_directions[index] = -1
 
         if next_value <= min_value:
             next_value = min_value
-            item["direction"] = 1
+            app.analog_profile_directions[index] = 1
 
     elif mode == "Random":
         next_value = random.randint(min_value, max_value)

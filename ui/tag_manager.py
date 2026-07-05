@@ -7,6 +7,7 @@ import sys
 from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
+from ui.scrollable_frame import SafeScrollableFrame
 
 
 COL_WIDTHS = {
@@ -188,7 +189,7 @@ def create_tag_manager_tab(app):
     create_header_cell(header, "Dash", 7, COL_WIDTHS["dash"])
     create_header_cell(header, "Ação", 8, COL_WIDTHS["delete"])
 
-    app.tag_table = ctk.CTkScrollableFrame(frame)
+    app.tag_table = SafeScrollableFrame(frame)
     app.tag_table.pack(fill="both", expand=True, padx=10, pady=10)
 
     refresh_tag_table(app)

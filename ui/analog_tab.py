@@ -86,7 +86,7 @@ def create_analog_row(app, index, tag):
         command=lambda idx=index: stop_profile(app, idx)
     ).pack(side="left", padx=8)
 
-    app.analog_widgets.append({
+    app.analog_controls.append({
         "name_entry": name_entry,
         "slider": slider,
         "value_label": value_label,
@@ -97,6 +97,6 @@ def create_analog_row(app, index, tag):
         "max_entry": max_entry,
         "step_entry": step_entry,
         "interval_entry": interval_entry,
-        "direction": 1,
-        "tag": tag
     })
+    app.analog_tags.append(tag)
+    app.analog_profile_directions[index] = 1

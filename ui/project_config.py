@@ -139,17 +139,19 @@ def build_project_data(app):
         }
 
     digital_inputs = []
-    for item in getattr(app, "digital_widgets", []):
+    digital_tags = getattr(app, "digital_tags", [])
+    for index, item in enumerate(getattr(app, "digital_controls", [])):
         digital_inputs.append({
-            "tag": item["tag"].name,
+            "tag": digital_tags[index].name,
             "mode": item["mode_menu"].get(),
             "pulse_ms": item["pulse_entry"].get(),
         })
 
     analog_profiles = []
-    for item in getattr(app, "analog_widgets", []):
+    analog_tags = getattr(app, "analog_tags", [])
+    for index, item in enumerate(getattr(app, "analog_controls", [])):
         analog_profiles.append({
-            "tag": item["tag"].name,
+            "tag": analog_tags[index].name,
             "mode": item["profile_mode"].get(),
             "min": item["min_entry"].get(),
             "max": item["max_entry"].get(),
@@ -383,8 +385,8 @@ def _restore_digital_settings(app, settings):
         for item in settings
         if isinstance(item, dict)
     }
-    for index, widget in enumerate(app.digital_widgets):
-        config = by_tag.get(widget["tag"].name)
+    for index, widget in enumerate(app.digital_controls):
+        config = by_tag.get(app.digital_tags[index].name)
         if config is None:
             continue
         mode = config.get("mode", "Toggle")
@@ -399,8 +401,8 @@ def _restore_analog_profiles(app, profiles):
         for item in profiles
         if isinstance(item, dict)
     }
-    for widget in app.analog_widgets:
-        config = by_tag.get(widget["tag"].name)
+    for index, widget in enumerate(app.analog_controls):
+        config = by_tag.get(app.analog_tags[index].name)
         if config is None:
             continue
         mode = config.get("mode", "Manual")
