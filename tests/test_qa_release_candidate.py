@@ -114,7 +114,7 @@ def test_brand_switching_revalidates_existing_tags():
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        ("name,data_type\nTag,BOOL\n", "colunas em falta"),
+        ("name,data_type\nTag,BOOL\n", "Missing columns"),
         (CSV_HEADER + "Tag,STRING,Input,A,1,1,0,0\n", "data_type inválido"),
         (CSV_HEADER + "Tag,BOOL,Unknown,A,1,1,0,0\n", "direction inválida"),
         (

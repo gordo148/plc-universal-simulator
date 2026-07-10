@@ -635,26 +635,62 @@ def parse_csv_bool(value):
     raise ValueError(f"valor booleano inválido: {value}")
 
 
+def _read_csv_dialect(file):
+    sample = file.read(4096)
+    file.seek(0)
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        return csv.excel
+
+
+def _normalize_csv_header(header):
+    return str(header or "").strip()
+
+
+def _build_csv_header_map(fieldnames):
+    header_map = {}
+    detected_columns = []
+
+    for header in fieldnames:
+        normalized = _normalize_csv_header(header)
+        if not normalized or normalized.lower().startswith("unnamed"):
+            continue
+
+        key = normalized.lower()
+        detected_columns.append(normalized)
+        header_map.setdefault(key, header)
+
+    return header_map, detected_columns
+
+
+def _format_missing_csv_columns_error(missing_fields, detected_columns):
+    detected = ", ".join(detected_columns) if detected_columns else "(none)"
+    return (
+        "CSV format invalid. "
+        "Missing columns: " + ", ".join(missing_fields) + ". "
+        "Detected columns: " + detected + "."
+    )
+
+
 def read_tags_csv(file_path, brand=None):
     tags = []
 
     with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
+        reader = csv.DictReader(file, dialect=_read_csv_dialect(file))
         if reader.fieldnames is None:
             raise ValueError("CSV sem cabeçalho")
 
-        header_map = {
-            str(header).strip().lower(): header
-            for header in reader.fieldnames
-        }
+        header_map, detected_columns = _build_csv_header_map(reader.fieldnames)
         missing_fields = [
             field for field in TAG_CSV_FIELDS
             if field not in header_map
         ]
         if missing_fields:
-            raise ValueError(
-                "colunas em falta: " + ", ".join(missing_fields)
-            )
+            raise ValueError(_format_missing_csv_columns_error(
+                missing_fields,
+                detected_columns,
+            ))
 
         direction_names = {
             "input": "Input",
@@ -973,7 +1009,7 @@ def import_tags_csv(app):
         LOGGER.warning("Universal CSV import failed: %s", error)
         messagebox.showerror(
             "Erro Import CSV",
-            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+            CSV_READ_ERROR if isinstance(error, OSError) else str(error),
         )
         return
 
