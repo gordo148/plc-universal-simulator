@@ -79,6 +79,39 @@ def test_valid_universal_csv(tmp_path):
     assert tags[1].enabled_alarm is False
 
 
+def test_empty_boolean_cells_are_false_for_all_boolean_columns(tmp_path):
+    path = tmp_path / "empty_boolean_cells.csv"
+    path.write_text(
+        CSV_HEADER + "Start,BOOL,Input,DBX0.0,,,,\n",
+        encoding="utf-8",
+    )
+
+    tags = tag_manager.read_tags_csv(path, "Siemens")
+
+    assert tags[0].enabled_sim is False
+    assert tags[0].enabled_trend is False
+    assert tags[0].enabled_alarm is False
+    assert tags[0].enabled_dashboard is False
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1", True),
+        ("true", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+        ("", False),
+    ],
+)
+def test_csv_boolean_values(value, expected):
+    assert tag_manager.parse_csv_bool(value) is expected
+
+
 def test_csv_with_trailing_empty_column_is_accepted(tmp_path):
     path = tmp_path / "tags_trailing_column.csv"
     path.write_text(

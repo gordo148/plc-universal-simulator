@@ -59,8 +59,8 @@ TAG_CSV_FIELDS = [
     "enabled_dashboard",
 ]
 
-TRUE_CSV_VALUES = {"1", "true", "yes"}
-FALSE_CSV_VALUES = {"0", "false", "no"}
+TRUE_CSV_VALUES = {"1", "true", "yes", "on"}
+FALSE_CSV_VALUES = {"", "0", "false", "no", "off"}
 
 TEMPLATE_FILENAMES = {
     "Siemens": "siemens_tags_template.csv",
