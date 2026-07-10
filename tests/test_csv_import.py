@@ -11,6 +11,53 @@ CSV_HEADER = (
     "enabled_alarm,enabled_dashboard\n"
 )
 
+ACCENTED_NAME = "Válvula_áéíóú_ãõ_ç_ºª"
+
+
+@pytest.mark.parametrize(
+    ("encoding", "bom"),
+    [
+        ("utf-8", False),
+        ("utf-8-sig", True),
+        ("cp1252", False),
+        ("latin-1", False),
+    ],
+    ids=["utf-8", "utf-8-bom", "windows-1252", "latin-1"],
+)
+def test_universal_csv_encoding_and_accents(tmp_path, encoding, bom):
+    path = tmp_path / f"tags-{encoding}.csv"
+    body = CSV_HEADER + f"{ACCENTED_NAME},BOOL,Input,DBX0.0,1,0,0,1\n"
+    data = body.encode(encoding)
+    if bom:
+        assert data.startswith(b"\xef\xbb\xbf")
+    path.write_bytes(data)
+
+    tags = tag_manager.read_tags_csv(path, "Siemens")
+
+    assert tags[0].name == ACCENTED_NAME
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "cp1252", "latin-1"])
+def test_tia_csv_encoding_and_accents(tmp_path, encoding):
+    path = tmp_path / f"tia-{encoding}.csv"
+    body = f"Name,Data Type,Logical Address,Comment\n{ACCENTED_NAME},Bool,%DBX0.0,Descrição ç ºª\n"
+    path.write_bytes(body.encode(encoding))
+
+    tags = tag_manager.read_tia_tags_csv(path)
+
+    assert tags[0].name == ACCENTED_NAME
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "cp1252", "latin-1"])
+def test_schneider_csv_encoding_and_accents(tmp_path, encoding):
+    path = tmp_path / f"schneider-{encoding}.csv"
+    body = f"Variable,Type,Address,Comment\n{ACCENTED_NAME},BOOL,%M0,Descrição ç ºª\n"
+    path.write_bytes(body.encode(encoding))
+
+    tags = tag_manager.read_schneider_tags_csv(path)
+
+    assert tags[0].name == ACCENTED_NAME
+
 
 def test_valid_universal_csv(tmp_path):
     path = tmp_path / "tags.csv"

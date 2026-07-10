@@ -1,5 +1,6 @@
 import csv
 import customtkinter as ctk
+from io import StringIO
 import logging
 from pathlib import Path
 import re
@@ -14,7 +15,25 @@ from ui.scrollable_frame import SafeScrollableFrame
 LOGGER = logging.getLogger(__name__)
 CSV_FORMAT_ERROR = "CSV format invalid. Check required columns."
 CSV_READ_ERROR = "Unable to read CSV file. Check file path and permissions."
+CSV_ENCODING_ERROR = (
+    "Unable to read CSV encoding. Save the file as UTF-8 CSV and try again."
+)
 CSV_EXPORT_ERROR = "Unable to export CSV. Check file path and permissions."
+CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+
+
+class CSVEncodingError(ValueError):
+    """Raised when a CSV cannot be decoded with a supported encoding."""
+
+
+def _open_csv_text(file_path):
+    data = Path(file_path).read_bytes()
+    for encoding in CSV_ENCODINGS:
+        try:
+            return StringIO(data.decode(encoding), newline="")
+        except UnicodeDecodeError:
+            continue
+    raise CSVEncodingError(CSV_ENCODING_ERROR)
 
 
 COL_WIDTHS = {
@@ -676,7 +695,7 @@ def _format_missing_csv_columns_error(missing_fields, detected_columns):
 def read_tags_csv(file_path, brand=None):
     tags = []
 
-    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+    with _open_csv_text(file_path) as file:
         reader = csv.DictReader(file, dialect=_read_csv_dialect(file))
         if reader.fieldnames is None:
             raise ValueError("CSV sem cabeçalho")
@@ -773,7 +792,7 @@ def write_tags_csv(file_path, tags):
 def read_tia_tags_csv(file_path):
     tags = []
 
-    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+    with _open_csv_text(file_path) as file:
         sample = file.read(4096)
         file.seek(0)
         try:
@@ -905,7 +924,7 @@ _find_tia_column = _find_import_column
 def read_schneider_tags_csv(file_path):
     tags = []
 
-    with open(file_path, "r", newline="", encoding="utf-8-sig") as file:
+    with _open_csv_text(file_path) as file:
         sample = file.read(4096)
         file.seek(0)
         try:
@@ -1035,7 +1054,11 @@ def import_tia_csv(app):
         LOGGER.warning("TIA CSV import failed: %s", error)
         messagebox.showerror(
             "Erro Import TIA CSV",
-            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+            CSV_READ_ERROR if isinstance(error, OSError) else (
+                CSV_ENCODING_ERROR
+                if isinstance(error, CSVEncodingError)
+                else CSV_FORMAT_ERROR
+            ),
         )
         return
 
@@ -1065,7 +1088,11 @@ def import_schneider_csv(app):
         LOGGER.warning("Schneider CSV import failed: %s", error)
         messagebox.showerror(
             "Erro Import Schneider CSV",
-            CSV_READ_ERROR if isinstance(error, OSError) else CSV_FORMAT_ERROR,
+            CSV_READ_ERROR if isinstance(error, OSError) else (
+                CSV_ENCODING_ERROR
+                if isinstance(error, CSVEncodingError)
+                else CSV_FORMAT_ERROR
+            ),
         )
         return
 
