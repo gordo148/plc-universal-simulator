@@ -6,10 +6,9 @@ from pathlib import Path
 import re
 import shutil
 import sys
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 from core.tag_model import Tag
-from ui.scrollable_frame import SafeScrollableFrame
 
 
 LOGGER = logging.getLogger(__name__)
@@ -49,6 +48,9 @@ COL_WIDTHS = {
     "dash": 70,
     "delete": 90,
 }
+
+TAG_TABLE_STYLE = "TagManager.Treeview"
+TAG_SCROLLBAR_STYLE = "TagManager.Vertical.TScrollbar"
 
 TAG_CSV_FIELDS = [
     "name",
@@ -205,24 +207,137 @@ def create_tag_manager_tab(app):
     )
     app.tag_database_validation_label.pack(fill="x", padx=15, pady=(0, 5))
 
-    header = ctk.CTkFrame(frame)
-    header.pack(fill="x", padx=10, pady=(10, 0))
+    configure_tag_table_style(frame)
+    table_frame = ctk.CTkFrame(
+        frame, fg_color="#242424", border_width=1, border_color="#454545",
+    )
+    table_frame.pack(fill="both", expand=True, padx=6, pady=(3, 6))
+    columns = (
+        "name", "data_type", "direction", "address", "enabled_sim",
+        "enabled_trend", "enabled_alarm", "enabled_dashboard", "delete",
+    )
+    headings = (
+        "Nome", "Tipo", "Direção", "Endereço", "Sim", "Trend",
+        "Alarme", "Dash", "Ação",
+    )
+    control_row = ttk.Frame(table_frame, style="TagManager.Controls.TFrame")
+    control_row.pack(fill="x")
+    widths = tuple(COL_WIDTHS.values())
+    for index, width in enumerate(widths):
+        control_row.grid_columnconfigure(
+            index, minsize=width, weight=1 if index == 0 else 0,
+        )
+    # Reserve the same space used by the vertical scrollbar below.
+    control_row.grid_columnconfigure(len(columns), minsize=16, weight=0)
+    app.tag_master_checkboxes = {}
+    for column, option in (
+        (4, "enabled_sim"),
+        (5, "enabled_trend"),
+        (6, "enabled_alarm"),
+        (7, "enabled_dashboard"),
+    ):
+        checkbox = ttk.Checkbutton(
+            control_row,
+            text="Todos",
+            style="TagManager.TCheckbutton",
+            command=lambda field=option: on_master_tag_option_clicked(app, field),
+        )
+        checkbox.grid(row=0, column=column, padx=2, pady=2)
+        app.tag_master_checkboxes[option] = checkbox
 
-    create_header_cell(header, "Nome", 0, COL_WIDTHS["name"])
-    create_header_cell(header, "Tipo", 1, COL_WIDTHS["type"])
-    create_header_cell(header, "Direção", 2, COL_WIDTHS["direction"])
-    create_header_cell(header, "Endereço", 3, COL_WIDTHS["address"])
-    create_header_cell(header, "Sim", 4, COL_WIDTHS["sim"])
-    create_header_cell(header, "Trend", 5, COL_WIDTHS["trend"])
-    create_header_cell(header, "Alarme", 6, COL_WIDTHS["alarm"])
-    create_header_cell(header, "Dash", 7, COL_WIDTHS["dash"])
-    create_header_cell(header, "Ação", 8, COL_WIDTHS["delete"])
-
-    app.tag_table = SafeScrollableFrame(frame)
-    app.tag_table.pack(fill="both", expand=True, padx=10, pady=10)
+    tree_body = ttk.Frame(table_frame, style="TagManager.Controls.TFrame")
+    tree_body.pack(fill="both", expand=True)
+    app.tag_table = ttk.Treeview(
+        tree_body, columns=columns, show="headings", selectmode="browse",
+        style=TAG_TABLE_STYLE,
+    )
+    for column, heading, width in zip(columns, headings, COL_WIDTHS.values()):
+        app.tag_table.heading(column, text=heading)
+        app.tag_table.column(
+            column, width=width, minwidth=width,
+            stretch=column == "name",
+            anchor="w" if column == "name" else "center",
+        )
+    scrollbar = ttk.Scrollbar(
+        tree_body, orient="vertical", command=app.tag_table.yview,
+        style=TAG_SCROLLBAR_STYLE,
+    )
+    app.tag_table.pack(side="left", fill="both", expand=True)
+    app.tag_table.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    app.tag_table.bind(
+        "<ButtonRelease-1>", lambda event: on_tag_table_click(app, event),
+    )
 
     refresh_tag_table(app)
     update_tag_address_context(app)
+
+
+def configure_tag_table_style(widget):
+    """Create the dark native table styles without changing the global theme."""
+    style = ttk.Style(widget)
+    style.configure(
+        TAG_TABLE_STYLE,
+        background="#242424",
+        fieldbackground="#242424",
+        foreground="#f0f0f0",
+        bordercolor="#454545",
+        lightcolor="#454545",
+        darkcolor="#454545",
+        borderwidth=1,
+        relief="flat",
+        rowheight=28,
+        font=("Arial", 11),
+    )
+    style.configure(
+        f"{TAG_TABLE_STYLE}.Heading",
+        background="#343434",
+        foreground="#f0f0f0",
+        bordercolor="#454545",
+        lightcolor="#454545",
+        darkcolor="#454545",
+        relief="flat",
+        padding=(5, 6),
+        font=("Arial", 11, "bold"),
+    )
+    style.map(
+        TAG_TABLE_STYLE,
+        background=[("selected", "#1f6aa5")],
+        foreground=[("selected", "#ffffff")],
+    )
+    style.map(
+        f"{TAG_TABLE_STYLE}.Heading",
+        background=[("active", "#3d3d3d")],
+        relief=[("pressed", "flat"), ("active", "flat")],
+    )
+    style.configure(
+        TAG_SCROLLBAR_STYLE,
+        background="#343434",
+        troughcolor="#242424",
+        bordercolor="#454545",
+        arrowcolor="#f0f0f0",
+        lightcolor="#343434",
+        darkcolor="#343434",
+        relief="flat",
+        borderwidth=1,
+    )
+    style.map(
+        TAG_SCROLLBAR_STYLE,
+        background=[("active", "#454545"), ("pressed", "#1f6aa5")],
+    )
+    style.configure("TagManager.Controls.TFrame", background="#2b2b2b")
+    style.configure(
+        "TagManager.TCheckbutton",
+        background="#2b2b2b",
+        foreground="#f0f0f0",
+        font=("Arial", 10),
+        padding=(2, 2),
+    )
+    style.map(
+        "TagManager.TCheckbutton",
+        background=[("active", "#343434")],
+        foreground=[("disabled", "#8a8a8a")],
+    )
 
 
 def update_csv_button_visibility(app):
@@ -1228,7 +1343,6 @@ def apply_imported_tags(
             if hasattr(app, "refresh_after_import"):
                 app.refresh_after_import(recovery_complete, recovery_failed)
             else:
-                app.generate_signals()
                 refresh_tag_table(app)
                 recovery_complete()
         except Exception:
@@ -1261,7 +1375,6 @@ def apply_imported_tags(
             app.refresh_after_import(complete, rollback)
             return True
         else:
-            app.generate_signals()
             refresh_tag_table(app)
     except Exception as error:
         rollback(error)
@@ -1337,105 +1450,119 @@ def export_csv_template(app):
 
 
 def refresh_tag_table(app):
-    for widget in app.tag_table.winfo_children():
-        widget.destroy()
+    children = app.tag_table.get_children()
+    if children:
+        app.tag_table.delete(*children)
 
-    for tag in app.tags:
-        create_tag_row(app, tag)
+    app.tag_table.tag_configure("even", background="#242424")
+    app.tag_table.tag_configure("odd", background="#2b2b2b")
 
+    for index, tag in enumerate(app.tags):
+        create_tag_row(app, tag, index)
+
+    update_master_tag_option_states(app)
     update_tag_database_validation(app)
 
 
-def create_tag_row(app, tag):
-    row = ctk.CTkFrame(app.tag_table)
-    row.pack(fill="x", padx=5, pady=4)
-
-    ctk.CTkLabel(row, text=tag.name, width=COL_WIDTHS["name"], anchor="w").grid(row=0, column=0, padx=4, pady=5)
-    ctk.CTkLabel(row, text=tag.data_type, width=COL_WIDTHS["type"], anchor="center").grid(row=0, column=1, padx=4)
-    ctk.CTkLabel(row, text=tag.direction, width=COL_WIDTHS["direction"], anchor="center").grid(row=0, column=2, padx=4)
+def create_tag_row(app, tag, index=None):
+    """Insert a lightweight native table row without per-cell widgets."""
     address_valid, _ = validate_tag_address(
         app.brand_menu.get(),
         tag.data_type,
         tag.address,
     )
-    ctk.CTkLabel(
-        row,
-        text=tag.address if address_valid else f"⚠ {tag.address}",
-        text_color="white" if address_valid else "red",
-        width=COL_WIDTHS["address"],
-        anchor="center",
-    ).grid(row=0, column=3, padx=4)
+    marker = lambda value: "✓" if value else "—"
+    iid = str(index if index is not None else len(app.tag_table.get_children()))
+    app.tag_table.insert("", "end", iid=iid, values=(
+        tag.name, tag.data_type, tag.direction,
+        tag.address if address_valid else f"⚠ {tag.address}",
+        marker(tag.enabled_sim), marker(tag.enabled_trend),
+        marker(tag.enabled_alarm), marker(tag.enabled_dashboard), "Eliminar",
+    ), tags=("even" if int(iid) % 2 == 0 else "odd",))
 
-    sim_var = ctk.BooleanVar(value=tag.enabled_sim)
-    trend_var = ctk.BooleanVar(value=tag.enabled_trend)
-    alarm_var = ctk.BooleanVar(value=tag.enabled_alarm)
-    dash_var = ctk.BooleanVar(value=tag.enabled_dashboard)
 
-    ctk.CTkCheckBox(
-        row,
-        text="",
-        variable=sim_var,
-        command=lambda: set_tag_flag(app, tag, "enabled_sim", sim_var.get()),
-        width=COL_WIDTHS["sim"]
-    ).grid(row=0, column=4, padx=4)
+def on_tag_table_click(app, event):
+    """Handle flag and delete cells without creating interactive row widgets."""
+    table = app.tag_table
+    item = table.identify_row(event.y)
+    column = table.identify_column(event.x)
+    if not item or not column:
+        return
+    try:
+        tag = app.tags[int(item)]
+    except (ValueError, IndexError):
+        return
 
-    ctk.CTkCheckBox(
-        row,
-        text="",
-        variable=trend_var,
-        command=lambda: set_tag_flag(app, tag, "enabled_trend", trend_var.get()),
-        width=COL_WIDTHS["trend"]
-    ).grid(row=0, column=5, padx=4)
+    column_number = int(column[1:])
+    flag_fields = {
+        5: "enabled_sim", 6: "enabled_trend",
+        7: "enabled_alarm", 8: "enabled_dashboard",
+    }
+    if column_number in flag_fields:
+        field = flag_fields[column_number]
+        value = not getattr(tag, field)
+        set_tag_flag(app, tag, field, value)
+        table.set(item, field, "✓" if value else "—")
+    elif column_number == 9:
+        delete_tag(app, tag)
 
-    ctk.CTkCheckBox(
-        row,
-        text="",
-        variable=alarm_var,
-        command=lambda: set_tag_flag(app, tag, "enabled_alarm", alarm_var.get()),
-        width=COL_WIDTHS["alarm"]
-    ).grid(row=0, column=6, padx=4)
 
-    ctk.CTkCheckBox(
-        row,
-        text="",
-        variable=dash_var,
-        command=lambda: set_tag_flag(app, tag, "enabled_dashboard", dash_var.get()),
-        width=COL_WIDTHS["dash"]
-    ).grid(row=0, column=7, padx=4)
+def update_master_tag_option_states(app, option_name=None):
+    """Synchronize master checkboxes with current tag values."""
+    checkboxes = getattr(app, "tag_master_checkboxes", {})
+    options = (option_name,) if option_name else tuple(checkboxes)
+    tags = app.tags
+    for option in options:
+        checkbox = checkboxes.get(option)
+        if checkbox is None:
+            continue
+        enabled_count = sum(bool(getattr(tag, option)) for tag in tags)
+        checkbox.state(["!selected", "!alternate"])
+        if tags and enabled_count == len(tags):
+            checkbox.state(["selected"])
+        elif enabled_count:
+            checkbox.state(["alternate"])
 
-    ctk.CTkButton(
-        row,
-        text="Eliminar",
-        width=COL_WIDTHS["delete"],
-        fg_color="#8b1e1e",
-        hover_color="#a83232",
-        command=lambda: delete_tag(app, tag)
-    ).grid(row=0, column=8, padx=4)
+
+def on_master_tag_option_clicked(app, option_name):
+    """Apply the clicked master state to all tags exactly once."""
+    checkbox = app.tag_master_checkboxes[option_name]
+    enabled = checkbox.instate(["selected"])
+    set_all_tag_option(app, option_name, enabled)
+
+
+def set_all_tag_option(app, option_name, enabled):
+    """Set one option for every tag with one lightweight table refresh."""
+    valid_options = {
+        "enabled_sim", "enabled_trend", "enabled_alarm", "enabled_dashboard",
+    }
+    if option_name not in valid_options:
+        raise ValueError(f"Unsupported tag option: {option_name}")
+
+    changed = False
+    for tag in app.tags:
+        if getattr(tag, option_name) != enabled:
+            setattr(tag, option_name, enabled)
+            changed = True
+
+    refresh_tag_table(app)
+    if changed:
+        mark_project_modified(app)
+
+
+def mark_project_modified(app):
+    """Notify applications with explicit dirty tracking once per user action."""
+    callback = getattr(app, "mark_project_modified", None)
+    if callable(callback):
+        callback()
 
 
 def set_tag_flag(app, tag, field, value):
+    changed = getattr(tag, field) != value
     setattr(tag, field, value)
-
-    if getattr(app, "is_rebuilding", False):
-        return
-
-    if field == "enabled_sim":
-        app.generate_signals()
-    elif field == "enabled_trend" and hasattr(app, "trend_selector_frame"):
-        from ui.trend_tab import refresh_trend_selectors
-
-        refresh_trend_selectors(app)
-    elif field == "enabled_alarm" and hasattr(app, "alarm_source_menu"):
-        from ui.alarm_tab import update_alarm_sources
-
-        update_alarm_sources(app)
-    elif field == "enabled_dashboard" and hasattr(app, "dashboard_tags_frame"):
-        from ui.dashboard_tab import update_dashboard
-
-        update_dashboard(app, "Dashboard atualizado")
-
-    if field != "enabled_sim" and hasattr(app, "update_pid_sources"):
-        app.update_pid_sources()
+    update_master_tag_option_states(app, field)
+    if changed:
+        mark_project_modified(app)
 
 
 def delete_tag(app, tag):

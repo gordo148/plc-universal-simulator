@@ -43,9 +43,7 @@ from ui.tag_manager import (
     get_invalid_tags_for_brand,
     get_numeric_tags,
     get_pid_output_tags,
-    create_tag_row,
     refresh_tag_table,
-    update_tag_database_validation,
     update_tag_address_context,
     update_csv_button_visibility,
 )
@@ -484,57 +482,22 @@ class PLCSimulator:
         return True
 
     def refresh_after_import(self, on_complete, on_error):
-        """Rebuild runtime and Tag Manager; defer all heavy tabs until opened."""
-        chunk_size = 25
+        """Refresh only tags; the user rebuilds signals with the update button."""
+        job = None
 
-        def schedule(callback):
+        def refresh():
+            self._rebuild_after_jobs.discard(job)
             if self._closing:
                 return
-            job = None
-            def run():
-                self._rebuild_after_jobs.discard(job)
-                if self._closing:
-                    return
-                try:
-                    callback()
-                except Exception as error:
-                    self._cancel_rebuild_jobs()
-                    on_error(error)
-            job = self.schedule_job(1, run)
-            self._rebuild_after_jobs.add(job)
-
-        def runtime():
-            self.tag_runtime.sync(self.tags)
-            for tag in get_invalid_tags_for_brand(self):
-                self.tag_runtime.invalidate(tag.name)
-            LOGGER.info("CSV import stage: runtime cache rebuilt tags=%d", len(self.tags))
-            mark_dirty_and_refresh_tags()
-
-        def mark_dirty_and_refresh_tags():
-            for name in ("Entradas Digitais", "Entradas Analógicas", "Dashboard", "Alarmes", "Trends"):
-                self._dirty_tabs.add(name)
-                LOGGER.info("CSV import stage: tab marked dirty tab=%s", name)
-            if self._tag_manager_initialized:
-                def rebuild_tag_manager(done):
-                    for widget in self.tag_table.winfo_children():
-                        widget.destroy()
-
-                    def build(start=0):
-                        end = min(start + chunk_size, len(self.tags))
-                        for tag in self.tags[start:end]:
-                            create_tag_row(self, tag)
-                        if end < len(self.tags):
-                            schedule(lambda: build(end))
-                        else:
-                            update_tag_database_validation(self)
-                            done()
-                    build()
-                LOGGER.info("CSV import stage: UI tab refresh started tab=Tag Manager")
-                rebuild_tag_manager(lambda: (LOGGER.info("CSV import stage: UI tab refresh completed tab=Tag Manager"), on_complete()))
-            else:
+            try:
+                if self._tag_manager_initialized:
+                    refresh_tag_table(self)
                 on_complete()
+            except Exception as error:
+                on_error(error)
 
-        schedule(runtime)
+        job = self.schedule_job(1, refresh)
+        self._rebuild_after_jobs.add(job)
 
     def _refresh_dirty_digital_tab(self):
         for widget in self.digital_scroll.winfo_children():

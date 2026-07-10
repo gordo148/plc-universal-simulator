@@ -203,7 +203,7 @@ def test_import_does_not_rebuild_analog_tags(monkeypatch, count):
 
     assert created == []
     assert callbacks_run == 1
-    assert "Entradas Analógicas" in app._dirty_tabs
+    assert app._dirty_tabs == set()
     assert completed == [True]
     assert errors == []
 

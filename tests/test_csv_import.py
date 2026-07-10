@@ -244,7 +244,7 @@ def test_invalid_csv_does_not_partially_replace_tags(tmp_path, monkeypatch):
     assert errors
 
 
-def test_failed_ui_refresh_restores_tags_and_runtime_without_raising(monkeypatch):
+def test_import_does_not_rebuild_signals_or_runtime(monkeypatch):
     original = [TagDefinition("Existing", "BOOL", "Input", "DBX1.0")]
     imported = [TagDefinition("Imported", "BOOL", "Input", "DBX2.0")]
     cache = RuntimeTagCache()
@@ -283,16 +283,12 @@ def test_failed_ui_refresh_restores_tags_and_runtime_without_raising(monkeypatch
         app, imported, "Import error", "Imported"
     )
 
-    assert result is False
-    assert app.tags is original
+    assert result is True
+    assert app.tags is imported
     assert cache.snapshot() == original_snapshot
-    # Rollback performs one recovery refresh; the failed forward refresh must
-    # not be repeated recursively.
     assert refresh_calls == 1
-    assert errors == [(
-        "Import error",
-        "Import could not be completed. Your previous tags were restored.",
-    )]
+    assert generate_calls == 0
+    assert errors == []
 
 
 class _ImportButton:
@@ -408,3 +404,83 @@ def test_rockwell_csv_preserves_symbolic_tag_case(tmp_path):
     tags = tag_manager.read_tags_csv(path, "Rockwell")
 
     assert tags[0].address == "Tank_Level"
+
+
+def test_bulk_tag_option_refreshes_once_without_generating_signals(monkeypatch):
+    tags = [
+        TagDefinition(f"Tag{i}", "BOOL", "Input", f"DBX0.{i}")
+        for i in range(4)
+    ]
+    refreshed = []
+    modified = []
+    app = SimpleNamespace(
+        tags=tags,
+        generate_signals=lambda: (_ for _ in ()).throw(
+            AssertionError("bulk selection must not generate signals")
+        ),
+        mark_project_modified=lambda: modified.append(True),
+    )
+    monkeypatch.setattr(
+        tag_manager, "refresh_tag_table", lambda target: refreshed.append(target)
+    )
+
+    tag_manager.set_all_tag_option(app, "enabled_alarm", True)
+
+    assert all(tag.enabled_alarm for tag in tags)
+    assert refreshed == [app]
+    assert modified == [True]
+
+
+class _MasterCheckbox:
+    def __init__(self):
+        self.states = set()
+
+    def state(self, changes):
+        for change in changes:
+            if change.startswith("!"):
+                self.states.discard(change[1:])
+            else:
+                self.states.add(change)
+
+
+def test_master_tag_option_has_all_three_states():
+    checkbox = _MasterCheckbox()
+    tags = [
+        TagDefinition("A", "BOOL", "Input", "DBX0.0", enabled_alarm=True),
+        TagDefinition("B", "BOOL", "Input", "DBX0.1", enabled_alarm=False),
+    ]
+    app = SimpleNamespace(
+        tags=tags,
+        tag_master_checkboxes={"enabled_alarm": checkbox},
+    )
+
+    tag_manager.update_master_tag_option_states(app)
+    assert checkbox.states == {"alternate"}
+
+    tags[1].enabled_alarm = True
+    tag_manager.update_master_tag_option_states(app)
+    assert checkbox.states == {"selected"}
+
+    tags[0].enabled_alarm = tags[1].enabled_alarm = False
+    tag_manager.update_master_tag_option_states(app)
+    assert checkbox.states == set()
+
+
+def test_individual_tag_toggle_updates_master_without_generating_signals():
+    checkbox = _MasterCheckbox()
+    modified = []
+    tag = TagDefinition("A", "BOOL", "Input", "DBX0.0", enabled_sim=False)
+    app = SimpleNamespace(
+        tags=[tag],
+        tag_master_checkboxes={"enabled_sim": checkbox},
+        mark_project_modified=lambda: modified.append(True),
+        generate_signals=lambda: (_ for _ in ()).throw(
+            AssertionError("an individual option toggle must not generate signals")
+        ),
+    )
+
+    tag_manager.set_tag_flag(app, tag, "enabled_sim", True)
+
+    assert tag.enabled_sim is True
+    assert checkbox.states == {"selected"}
+    assert modified == [True]

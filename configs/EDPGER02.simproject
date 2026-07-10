@@ -1,0 +1,932 @@
+{
+    "format": "plc-universal-simulator-project",
+    "version": 1,
+    "plc": {
+        "brand": "Siemens",
+        "ip": "192.168.0.84",
+        "settings": {
+            "rack": "0",
+            "slot": "1",
+            "db_number": "2000"
+        }
+    },
+    "tags": [
+        {
+            "name": "tHoras_Func_Motor",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tMinutos_Func_Motor",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD4",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "pHoras_Func_Motor",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD8",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "pMinutos_Func_Motor",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD12",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "VL12G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD16",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "VL23G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD20",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "VL31G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD24",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "VMediaG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD28",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tBaterias",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD32",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tRolamento2",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD36",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "VMediaR",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD40",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "MotorOn",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX44.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "pTENSAOR1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX44.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "pTENSAOB1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX44.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "spTFuncProva",
+            "data_type": "INT",
+            "direction": "Input",
+            "address": "DBW46",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "spRampaCargaProva",
+            "data_type": "INT",
+            "direction": "Input",
+            "address": "DBW48",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "spPActivaProva",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD50",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP2_Aberto",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX54.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "IL1G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD56",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mAutomático",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX60.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFS2",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD62",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "TConsCombustivel",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD66",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tRolamento1",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD70",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mChaveE",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX74.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "MotorArref",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX74.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "sLeituraR1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX74.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "PQReativaG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD76",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP1_Fechado",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX80.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mSemCorte",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX80.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "int52R1_Aberto",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX80.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "NVLCombust2",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD82",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mSemCarga",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX86.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "aB2",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX86.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "MRPM",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD88",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mOFF",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX92.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "EPTOTALG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD94",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "aB1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX98.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "POil",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD100",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP1_Trip",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX104.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFT2",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD106",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "PPAtivaG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD110",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mComCarga",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX114.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "sincB2",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX114.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "int52G1_Fechado",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX114.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "int52G1_Disp",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX114.3",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFR2",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD116",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "aGrupo",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX120.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP2_Trip",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX120.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP1_Aberto",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX120.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "sincGrupo",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX120.3",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "int52G1_Aberto",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX120.4",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tAguaMotor",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD122",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "NVLCombust1",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD126",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFS1",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD130",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "IMediaG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD134",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "IL2G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD138",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "sLeituraB1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX142.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "int52R1_Fechado",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX142.1",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mProva",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX142.2",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "intACOP2_Fechado",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX142.3",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "ContArranq",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD144",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "FrequênciaR",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD148",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "EQTOTALG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD152",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mComCorte",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX156.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "IL3G",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD158",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "PSAparenteG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD162",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFT1",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD166",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "FPG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD170",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "mManual",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX174.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "ICargaBat",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD176",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "sincB1",
+            "data_type": "BOOL",
+            "direction": "Input",
+            "address": "DBX180.0",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "FrequênciaG",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD182",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        },
+        {
+            "name": "tEnrolamentoFR1",
+            "data_type": "REAL",
+            "direction": "Input",
+            "address": "DBD186",
+            "enabled_sim": true,
+            "enabled_trend": false,
+            "enabled_alarm": false,
+            "enabled_dashboard": false
+        }
+    ],
+    "runtime_settings": {
+        "digital_inputs": [
+            {
+                "tag": "MotorOn",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "pTENSAOR1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "pTENSAOB1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP2_Aberto",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mAutomático",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mChaveE",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "MotorArref",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "sLeituraR1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP1_Fechado",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mSemCorte",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "int52R1_Aberto",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mSemCarga",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "aB2",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mOFF",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "aB1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP1_Trip",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mComCarga",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "sincB2",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "int52G1_Fechado",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "int52G1_Disp",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "aGrupo",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP2_Trip",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP1_Aberto",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "sincGrupo",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "int52G1_Aberto",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "sLeituraB1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "int52R1_Fechado",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mProva",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "intACOP2_Fechado",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mComCorte",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "mManual",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            },
+            {
+                "tag": "sincB1",
+                "mode": "Toggle",
+                "pulse_ms": "500"
+            }
+        ]
+    },
+    "alarms": [],
+    "pid": {
+        "sp": "10000",
+        "sp_source": "Manual",
+        "pv_source": "",
+        "out_source": "",
+        "out_address": "",
+        "kp": "1.0",
+        "ki": "0.0",
+        "kd": "0.0",
+        "out_min": "0",
+        "out_max": "27648",
+        "interval_ms": "500"
+    },
+    "trends": {
+        "enabled_tags": [],
+        "selected_curves": [],
+        "auto_scale": true
+    },
+    "dashboard": {
+        "enabled_tags": []
+    },
+    "analog_profiles": []
+}
