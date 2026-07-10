@@ -100,6 +100,9 @@ def scan_feedbacks(app):
 
 
 def update_feedback_values(app):
+    if not hasattr(app, "feedback_rows"):
+        return
+
     for row in app.feedback_rows:
         tag = row["tag"]
         value = app.tag_runtime.get_value(tag.name)

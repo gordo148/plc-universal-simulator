@@ -13,6 +13,8 @@ from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 LOGGER = logging.getLogger(__name__)
 MAX_COILS_PER_READ = 2000
 MAX_REGISTERS_PER_READ = 125
+SIEMENS_MAX_GAP = 16
+SIEMENS_MAX_READ_SIZE = 200
 
 # These names remain patchable for tests. A class is imported and cached only
 # when its brand is first selected.
@@ -51,6 +53,9 @@ class PLCService:
         self,
         driver: Any | None = None,
         runtime_cache: RuntimeTagCache | None = None,
+        *,
+        siemens_max_gap: int = SIEMENS_MAX_GAP,
+        siemens_max_read_size: int = SIEMENS_MAX_READ_SIZE,
     ) -> None:
         self._driver = driver
         self._brand: str | None = None
@@ -64,6 +69,8 @@ class PLCService:
             else None
         )
         self.runtime_cache = runtime_cache or RuntimeTagCache()
+        self.siemens_max_gap = max(0, int(siemens_max_gap))
+        self.siemens_max_read_size = max(4, int(siemens_max_read_size))
 
     def connect(self, brand: str, ip: str, **options) -> bool:
         self.disconnect()
@@ -301,50 +308,88 @@ class PLCService:
     def _scan_siemens(self, tags: list[TagDefinition]) -> bool:
         snap7_util = import_module("snap7.util")
         parsed = []
-        maximum_end = 0
 
         for tag in tags:
             try:
-                address = _parse_siemens_address(tag)
-                parsed.append((tag, address))
-                maximum_end = max(maximum_end, address[0] + _data_size(tag.data_type))
+                byte_index, bit_index = _parse_siemens_address(tag)
+                parsed.append(
+                    (tag, byte_index, bit_index, _data_size(tag.data_type))
+                )
             except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Invalid Siemens tag address: name=%s address=%s",
+                    tag.name,
+                    tag.address,
+                )
                 self.runtime_cache.invalidate(tag.name)
 
         if not parsed:
             return True
 
-        try:
-            data = self._driver.read_data(maximum_end)
-        except Exception:
-            LOGGER.exception("Siemens polling read failed")
-            for tag, _ in parsed:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-        if data is None:
-            for tag, _ in parsed:
-                self.runtime_cache.invalidate(tag.name)
-            return False
-
-        for tag, (byte_index, bit_index) in parsed:
+        success = True
+        ranges = _siemens_read_ranges(
+            parsed,
+            self.siemens_max_gap,
+            self.siemens_max_read_size,
+        )
+        for start, size, range_tags in ranges:
+            LOGGER.debug(
+                "Siemens DB read: DB=%s start=%s size=%s tags=%s",
+                getattr(self._driver, "db_number", "Unknown"),
+                start,
+                size,
+                len(range_tags),
+            )
             try:
-                if tag.data_type == "BOOL":
-                    value = snap7_util.get_bool(data, byte_index, bit_index)
-                elif tag.data_type == "INT":
-                    value = snap7_util.get_int(data, byte_index)
-                elif tag.data_type == "REAL":
-                    value = round(snap7_util.get_real(data, byte_index), 3)
-                else:
-                    raise ValueError("Unsupported tag type")
-                self.runtime_cache.update(
-                    tag.name,
-                    value,
-                    RuntimeValueSource.PLC,
+                data = self._driver.read_range(start, size)
+                if data is None or len(data) < size:
+                    raise ValueError(
+                        f"expected {size} bytes, received "
+                        f"{0 if data is None else len(data)}"
+                    )
+            except Exception:
+                success = False
+                affected = ", ".join(
+                    f"{tag.name} ({tag.address})"
+                    for tag, _byte, _bit, _size in range_tags
                 )
-            except (IndexError, TypeError, ValueError):
-                self.runtime_cache.invalidate(tag.name)
+                LOGGER.exception(
+                    "Siemens DB read failed: DB=%s start=%s size=%s "
+                    "affected_tags=%s",
+                    getattr(self._driver, "db_number", "Unknown"),
+                    start,
+                    size,
+                    affected,
+                )
+                for tag, _byte, _bit, _size in range_tags:
+                    self.runtime_cache.invalidate(tag.name)
+                continue
 
-        return True
+            for tag, byte_index, bit_index, _size in range_tags:
+                relative_offset = byte_index - start
+                try:
+                    if tag.data_type == "BOOL":
+                        value = snap7_util.get_bool(
+                            data, relative_offset, bit_index
+                        )
+                    elif tag.data_type == "INT":
+                        value = snap7_util.get_int(data, relative_offset)
+                    elif tag.data_type == "REAL":
+                        value = round(
+                            snap7_util.get_real(data, relative_offset), 3
+                        )
+                    else:
+                        raise ValueError("Unsupported tag type")
+                    self.runtime_cache.update(
+                        tag.name,
+                        value,
+                        RuntimeValueSource.PLC,
+                    )
+                except (IndexError, TypeError, ValueError):
+                    success = False
+                    self.runtime_cache.invalidate(tag.name)
+
+        return success
 
     def _scan_modbus(self, tags: list[TagDefinition], address_parser) -> bool:
         coils = []
@@ -585,27 +630,57 @@ def _data_size(data_type: str) -> int:
     return {"BOOL": 1, "INT": 2, "REAL": 4}.get(data_type, 0)
 
 
+def _siemens_read_ranges(parsed_tags, maximum_gap, maximum_size):
+    """Group parsed Siemens tags into compact, size-limited DB ranges."""
+    ranges = []
+    current = []
+    start = None
+    end = None
+
+    for item in sorted(parsed_tags, key=lambda parsed: parsed[1]):
+        tag_start = item[1]
+        tag_end = tag_start + item[3]
+        if current and (
+            tag_start - end > maximum_gap
+            or max(end, tag_end) - start > maximum_size
+        ):
+            ranges.append((start, end - start, current))
+            current = []
+            start = None
+            end = None
+
+        if not current:
+            start = tag_start
+            end = tag_end
+        else:
+            end = max(end, tag_end)
+        current.append(item)
+
+    if current:
+        ranges.append((start, end - start, current))
+    return ranges
+
+
 def _parse_siemens_address(tag: TagDefinition) -> tuple[int, int | None]:
-    address = tag.address.strip().upper()
+    address = str(tag.address).strip().upper()
     if tag.data_type == "BOOL":
-        byte_text, bit_text = address.replace("DBX", "").split(".")
-        bit_index = int(bit_text)
-        if bit_index < 0 or bit_index > 7:
+        match = re.fullmatch(r"DBX(\d+)\.(-?\d+)", address)
+        if match is None:
+            raise ValueError("Invalid Siemens BOOL address")
+        bit_index = int(match.group(2))
+        if not 0 <= bit_index <= 7:
             raise ValueError("Invalid bit index")
-        byte_index = int(byte_text)
-        if byte_index < 0:
-            raise ValueError("Invalid byte index")
-        return byte_index, bit_index
+        return int(match.group(1)), bit_index
     if tag.data_type == "INT":
-        byte_index = int(address.replace("DBW", ""))
-        if byte_index < 0:
-            raise ValueError("Invalid byte index")
-        return byte_index, None
+        match = re.fullmatch(r"DBW(\d+)", address)
+        if match is None:
+            raise ValueError("Invalid Siemens INT address")
+        return int(match.group(1)), None
     if tag.data_type == "REAL":
-        byte_index = int(address.replace("DBD", ""))
-        if byte_index < 0:
-            raise ValueError("Invalid byte index")
-        return byte_index, None
+        match = re.fullmatch(r"DBD(\d+)", address)
+        if match is None:
+            raise ValueError("Invalid Siemens REAL address")
+        return int(match.group(1)), None
     raise ValueError("Unsupported tag type")
 
 

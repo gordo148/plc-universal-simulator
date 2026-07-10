@@ -1,13 +1,23 @@
-import os
 import logging
+import os
 import platform
 import sys
 import time
 from pathlib import Path
-import customtkinter as ctk
 from tkinter import PhotoImage, TclError, messagebox
 
+import customtkinter as ctk
+
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
+from core.version import (
+    APP_BUILD_DATE,
+    APP_GIT_BRANCH,
+    APP_GIT_COMMIT,
+    APP_NAME,
+    APP_RELEASE,
+    APP_VERSION,
+    get_build_type,
+)
 from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
 
@@ -58,7 +68,6 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 LOGGER = logging.getLogger(__name__)
-APP_VERSION = "2.2"
 NO_RECENT_PROJECTS = "Nenhum projeto recente"
 AVAILABLE_PLC_DRIVERS = (
     "Siemens S7",
@@ -71,23 +80,44 @@ AVAILABLE_PLC_DRIVERS = (
 
 
 def get_application_icon_path():
+    """Return the application icon path for source and packaged builds."""
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent))
     return bundle_root / "assets" / "icon.png"
 
 
 def get_about_text():
-    build_type = "Packaged desktop build" if getattr(sys, "frozen", False) else "Source build"
+    """Build the About dialog text from canonical and runtime metadata."""
     drivers = "\n".join(f"  • {driver}" for driver in AVAILABLE_PLC_DRIVERS)
     return (
-        "PLC Universal Simulator\n"
-        "Version: v2.2 Stable\n"
-        f"Build type: {build_type}\n"
+        f"{APP_NAME}\n\n"
+        f"Version: {APP_VERSION}\n"
+        f"Release: {APP_RELEASE}\n"
+        f"Build: {get_build_type()}\n"
+        f"Commit: {APP_GIT_COMMIT}\n"
+        f"Branch: {APP_GIT_BRANCH}\n"
+        f"Built on: {APP_BUILD_DATE}\n\n"
         f"Python: {platform.python_version()}\n"
-        f"Operating system: {platform.system()} {platform.release()}\n\n"
+        f"Operating system: {get_operating_system_name()}\n\n"
         "Available PLC drivers:\n"
         f"{drivers}\n\n"
         "Plugin support: Dormant / opt-in (automatic loading disabled)"
     )
+
+
+def get_operating_system_name():
+    """Return a friendly OS name, falling back to the kernel description."""
+    if platform.system() == "Linux":
+        try:
+            os_release = platform.freedesktop_os_release()
+        except OSError:
+            pass
+        else:
+            return os_release.get("PRETTY_NAME") or " ".join(
+                part
+                for part in (os_release.get("NAME"), os_release.get("VERSION_ID"))
+                if part
+            )
+    return f"{platform.system()} {platform.release()}".strip()
 
 
 class PLCSimulator:
@@ -134,7 +164,7 @@ class PLCSimulator:
         self.app = ctk.CTk()
         self._set_application_icon()
         self.app.report_callback_exception = self._report_callback_exception
-        self.app.title("PLC Simulator Universal — Novo Projeto")
+        self.app.title(f"{APP_NAME} v{APP_VERSION}")
         self.app.geometry(self.settings.window_size)
         self.app.minsize(1200, 750)
         self.app.protocol("WM_DELETE_WINDOW", self.on_close)

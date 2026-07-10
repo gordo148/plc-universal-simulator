@@ -42,6 +42,7 @@ datas = [
     (os.path.join(project_root, "assets", "icon.png"), "assets"),
 ]
 hiddenimports = optional_submodules("customtkinter") + [
+    "core.version",
     "drivers.internal_simulator",
     "drivers.modbus_tcp",
     "drivers.omron_fins",

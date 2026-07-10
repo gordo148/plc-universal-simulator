@@ -206,7 +206,7 @@ not written to project files.
 
 ## Screenshots
 
-> Screenshots are placeholders for the v2.2 release package.
+> Screenshots are placeholders for the current release package.
 
 - Dashboard — screenshot placeholder
 - Tag Manager — screenshot placeholder

@@ -6,6 +6,7 @@ import tempfile
 from tkinter import filedialog, messagebox
 
 from core.tag_model import Tag
+from core.version import APP_NAME, APP_VERSION
 from ui.header import SCHNEIDER_MODELS, update_top_status_bar
 from ui.tag_manager import (
     get_numeric_tags,
@@ -673,9 +674,10 @@ def _set_entry(entry, value):
 
 
 def _update_project_title(app):
+    """Update the window title while retaining application version identity."""
     file_path = getattr(app, "project_path", None)
     project_name = os.path.basename(file_path) if file_path else "Novo Projeto"
-    app.app.title(f"PLC Simulator Universal — {project_name}")
+    app.app.title(f"{APP_NAME} v{APP_VERSION} — {project_name}")
     update_top_status_bar(app)
 
 

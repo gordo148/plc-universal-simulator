@@ -2,6 +2,7 @@ import logging
 import sys
 import time
 
+from core.version import APP_NAME, APP_VERSION
 from services.logger_service import configure_logging
 
 STARTUP_STARTED = time.perf_counter()
@@ -45,7 +46,7 @@ def _log_startup_metrics():
 
 if __name__ == "__main__":
     sys.excepthook = _log_unexpected_exception
-    LOGGER.info("Application startup")
+    LOGGER.info("%s v%s startup", APP_NAME, APP_VERSION)
     try:
         simulator = PLCSimulator()
         _log_startup_metrics()

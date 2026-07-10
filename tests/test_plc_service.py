@@ -40,7 +40,7 @@ def test_siemens_read_routes_to_driver_and_decodes_values():
     set_bool(data, 0, 0, True)
     set_int(data, 10, -123)
     set_real(data, 20, 12.5)
-    driver.read_data.return_value = data
+    driver.read_range.return_value = data
     cache = RuntimeTagCache()
     service = PLCService(driver, cache)
     tags = [
@@ -51,10 +51,134 @@ def test_siemens_read_routes_to_driver_and_decodes_values():
 
     assert service.read(tags, brand="Siemens")
 
-    driver.read_data.assert_called_once_with(24)
+    driver.read_range.assert_called_once_with(0, 24)
     assert cache.get_value("Run") is True
     assert cache.get_value("Count") == -123
     assert cache.get_value("Level") == 12.5
+
+
+def test_siemens_contiguous_and_overlapping_tags_use_one_compact_range():
+    driver = connected_driver()
+    data = bytearray(12)
+    set_real(data, 0, 1.0)
+    set_real(data, 4, 2.0)
+    set_real(data, 8, 3.0)
+    driver.read_range.return_value = data
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("First", "REAL", "Input", "DBD0"),
+        TagDefinition("Overlap", "INT", "Input", "DBW2"),
+        TagDefinition("Second", "REAL", "Input", "DBD4"),
+        TagDefinition("Third", "REAL", "Input", "DBD8"),
+    ]
+
+    assert service.read(tags, brand="Siemens")
+    driver.read_range.assert_called_once_with(0, 12)
+    assert cache.get_value("First") == 1.0
+    assert cache.get_value("Second") == 2.0
+    assert cache.get_value("Third") == 3.0
+
+
+def test_siemens_large_gap_and_high_offset_use_relative_ranges():
+    driver = connected_driver()
+
+    def read_range(start, size):
+        data = bytearray(size)
+        set_int(data, 0, 11 if start == 0 else 99)
+        return data
+
+    driver.read_range.side_effect = read_range
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Low", "INT", "Input", "DBW0"),
+        TagDefinition("High", "INT", "Input", "DBW2000"),
+    ]
+
+    assert service.read(tags, brand="Siemens")
+    assert driver.read_range.call_args_list == [
+        ((0, 2), {}),
+        ((2000, 2), {}),
+    ]
+    assert cache.get_value("Low") == 11
+    assert cache.get_value("High") == 99
+
+
+def test_siemens_bool_tags_sharing_a_byte_use_one_byte_read():
+    driver = connected_driver()
+    data = bytearray(1)
+    set_bool(data, 0, 1, True)
+    set_bool(data, 0, 7, True)
+    driver.read_range.return_value = data
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("BitOne", "BOOL", "Input", "DBX50.1"),
+        TagDefinition("BitSeven", "BOOL", "Input", "DBX50.7"),
+    ]
+
+    assert service.read(tags, brand="Siemens")
+    driver.read_range.assert_called_once_with(50, 1)
+    assert cache.get_value("BitOne") is True
+    assert cache.get_value("BitSeven") is True
+
+
+def test_siemens_failed_range_does_not_invalidate_successful_range():
+    driver = connected_driver()
+
+    def read_range(start, size):
+        if start == 500:
+            raise RuntimeError("out of range")
+        data = bytearray(size)
+        set_int(data, 0, 42)
+        return data
+
+    driver.read_range.side_effect = read_range
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Good", "INT", "Input", "DBW0"),
+        TagDefinition("Bad", "REAL", "Input", "DBD500"),
+    ]
+
+    assert service.read(tags, brand="Siemens") is False
+    assert cache.get_value("Good") == 42
+    assert cache.get("Good").valid is True
+    assert cache.get("Bad").valid is False
+
+
+def test_siemens_invalid_bit_index_only_invalidates_that_tag():
+    driver = connected_driver()
+    data = bytearray(2)
+    set_int(data, 0, 7)
+    driver.read_range.return_value = data
+    cache = RuntimeTagCache()
+    service = PLCService(driver, cache)
+    tags = [
+        TagDefinition("Invalid", "BOOL", "Input", "DBX0.8"),
+        TagDefinition("Valid", "INT", "Input", "DBW20"),
+    ]
+
+    assert service.read(tags, brand="Siemens")
+    driver.read_range.assert_called_once_with(20, 2)
+    assert cache.get("Invalid").valid is False
+    assert cache.get_value("Valid") == 7
+
+
+def test_siemens_dense_tags_split_at_maximum_read_size():
+    driver = connected_driver()
+    driver.read_range.side_effect = lambda _start, size: bytearray(size)
+    service = PLCService(driver, siemens_max_gap=16, siemens_max_read_size=200)
+    tags = [
+        TagDefinition(f"Value{offset}", "REAL", "Input", f"DBD{offset}")
+        for offset in range(0, 404, 4)
+    ]
+
+    assert service.read(tags, brand="Siemens")
+    calls = [call.args for call in driver.read_range.call_args_list]
+    assert calls == [(0, 200), (200, 200), (400, 4)]
+    assert all(size <= 200 for _start, size in calls)
 
 
 def test_schneider_read_routes_bool_int_and_real_to_mock_driver():

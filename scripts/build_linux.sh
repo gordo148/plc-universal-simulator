@@ -13,6 +13,8 @@ if ! "${PYTHON}" -c "import PyInstaller" >/dev/null 2>&1; then
     exit 1
 fi
 
+"${PYTHON}" scripts/generate_version.py
+
 "${PYTHON}" -m PyInstaller \
     --clean \
     --noconfirm \

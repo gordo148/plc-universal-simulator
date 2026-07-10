@@ -19,10 +19,15 @@ class SiemensS7Driver:
         return self.client.get_connected()
 
     def read_data(self, size=1000):
+        """Read from DB byte zero (kept for backwards compatibility)."""
+        return self.read_range(0, size)
+
+    def read_range(self, start, size):
+        """Read a bounded byte range from the configured data block."""
         if not self.is_connected():
             return None
 
-        return self.client.db_read(self.db_number, 0, size)
+        return self.client.db_read(self.db_number, int(start), int(size))
 
     def write_digital(self, byte_index, bit_index, value):
         if not self.is_connected():
