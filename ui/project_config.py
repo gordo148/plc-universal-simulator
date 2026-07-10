@@ -190,6 +190,8 @@ def build_project_data(app):
     analog_profiles = []
     analog_tags = getattr(app, "analog_tags", [])
     for index, item in enumerate(getattr(app, "analog_controls", [])):
+        if not item.get("interactive", True):
+            continue
         analog_profiles.append({
             "tag": analog_tags[index].name,
             "mode": item["profile_mode"].get(),
@@ -300,6 +302,8 @@ def _write_project(app, file_path):
 
 def _apply_project_data(app, project, show_error=True):
     try:
+        if hasattr(app, "cancel_pending_tab_refreshes"):
+            app.cancel_pending_tab_refreshes()
         app.disconnect()
 
         tags = [
@@ -347,7 +351,12 @@ def _apply_project_data(app, project, show_error=True):
             app,
             project.get("runtime_settings", {}).get("digital_inputs", []),
         )
-        _restore_analog_profiles(app, project.get("analog_profiles", []))
+        if "Entradas Analógicas" in getattr(app, "_dirty_tabs", set()):
+            app._pending_analog_profiles = copy.deepcopy(
+                project.get("analog_profiles", [])
+            )
+        else:
+            _restore_analog_profiles(app, project.get("analog_profiles", []))
         if hasattr(app, "ensure_pid_tab"):
             app.ensure_pid_tab()
         _restore_pid(app, project.get("pid", {}))
@@ -445,6 +454,8 @@ def _restore_analog_profiles(app, profiles):
         if isinstance(item, dict)
     }
     for index, widget in enumerate(app.analog_controls):
+        if not widget.get("interactive", True):
+            continue
         config = by_tag.get(app.analog_tags[index].name)
         if config is None:
             continue

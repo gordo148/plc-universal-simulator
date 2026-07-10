@@ -13,7 +13,14 @@ from services.settings_service import ApplicationSettings
 
 from ui.header import create_header, SCHNEIDER_MODELS
 from ui.digital_tab import create_digital_row
-from ui.analog_tab import create_analog_row
+from ui.analog_tab import (
+    begin_analog_refresh,
+    cancel_analog_refresh,
+    create_analog_tab,
+    create_analog_row,
+    finish_analog_refresh,
+    refresh_analog_tab,
+)
 from ui.pid_tab import create_pid_tab
 from ui.pid_logic import start_pid as pid_start
 from ui.pid_logic import stop_pid as pid_stop
@@ -36,7 +43,9 @@ from ui.tag_manager import (
     get_invalid_tags_for_brand,
     get_numeric_tags,
     get_pid_output_tags,
+    create_tag_row,
     refresh_tag_table,
+    update_tag_database_validation,
     update_tag_address_context,
     update_csv_button_visibility,
 )
@@ -110,6 +119,12 @@ class PLCSimulator:
         self._feedback_initialized = False
         self._pid_initialized = False
         self._alarm_initialized = False
+        self.is_rebuilding = False
+        self._rebuild_after_jobs = set()
+        self._closing = False
+        self.is_closing = False
+        self._pending_jobs = set()
+        self._dirty_tabs = set()
 
         self.cyclic_read_enabled = False
 
@@ -134,7 +149,47 @@ class PLCSimulator:
         self.update_brand(self.settings.plc_brand)
         self.refresh_recent_projects()
         self._mark_project_saved()
-        self.app.after_idle(self.ensure_dashboard_tab)
+        self.schedule_job(0, self.ensure_dashboard_tab)
+
+    def schedule_job(self, delay, callback):
+        """Schedule and centrally track a callback that is safe during shutdown."""
+        if self.is_closing:
+            return None
+        job = None
+
+        def guarded_callback():
+            if job is not None:
+                self._pending_jobs.discard(job)
+            if self.is_closing:
+                return
+            try:
+                callback()
+            except TclError:
+                if not self.is_closing:
+                    raise
+
+        job = self.app.after(delay, guarded_callback)
+        self._pending_jobs.add(job)
+        return job
+
+    def cancel_job(self, job):
+        if job is None:
+            return
+        self._pending_jobs.discard(job)
+        try:
+            self.app.after_cancel(job)
+        except TclError:
+            if not self.is_closing:
+                raise
+
+    def cancel_pending_jobs(self):
+        for job in tuple(self._pending_jobs):
+            try:
+                self.app.after_cancel(job)
+            except TclError:
+                if not self.is_closing:
+                    raise
+        self._pending_jobs.clear()
 
     def _set_application_icon(self):
         try:
@@ -165,6 +220,7 @@ class PLCSimulator:
         self.digital_scroll = SafeScrollableFrame(self.tab_digital)
         self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
+        create_analog_tab(self)
         self.analog_scroll = SafeScrollableFrame(self.tab_analog)
         self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -172,16 +228,32 @@ class PLCSimulator:
         selected_tab = self.tabs.get()
         if selected_tab == "Dashboard":
             self.ensure_dashboard_tab()
+            if selected_tab in self._dirty_tabs:
+                update_dashboard(self, "Dashboard refreshed")
+                self._dirty_tabs.discard(selected_tab)
         elif selected_tab == "Tag Manager":
             self.ensure_tag_manager_tab()
+        elif selected_tab == "Entradas Analógicas":
+            if selected_tab in self._dirty_tabs:
+                refresh_analog_tab(self, reset_page=True)
+        elif selected_tab == "Entradas Digitais":
+            if selected_tab in self._dirty_tabs:
+                self._refresh_dirty_digital_tab()
         elif selected_tab == "Feedbacks":
             self.ensure_feedback_tab()
         elif selected_tab == "PID":
             self.ensure_pid_tab()
         elif selected_tab == "Alarmes":
             self.ensure_alarm_tab()
+            if selected_tab in self._dirty_tabs:
+                update_alarm_sources(self)
+                self._dirty_tabs.discard(selected_tab)
         elif selected_tab == "Trends":
             self.ensure_trend_tab()
+            if selected_tab in self._dirty_tabs:
+                from ui.trend_tab import refresh_trend_selectors
+                refresh_trend_selectors(self)
+                self._dirty_tabs.discard(selected_tab)
 
     def ensure_dashboard_tab(self):
         if self._dashboard_initialized:
@@ -338,7 +410,8 @@ class PLCSimulator:
         if hasattr(self, "tag_import_tia_csv_button"):
             update_csv_button_visibility(self)
         update_tag_address_context(self)
-        self.generate_signals()
+        if not self.is_rebuilding:
+            self.generate_signals()
 
     def update_schneider_model(self, model):
         defaults = SCHNEIDER_MODELS[model]
@@ -354,24 +427,20 @@ class PLCSimulator:
 
     def clear_signal_frames(self):
         for callback_id in self.pending_pulse_callbacks.values():
-            self.app.after_cancel(callback_id)
+            self.cancel_job(callback_id)
         self.pending_pulse_callbacks.clear()
 
         for widget in self.digital_scroll.winfo_children():
             widget.destroy()
 
-        for widget in self.analog_scroll.winfo_children():
-            widget.destroy()
-
         self.digital_states.clear()
         self.digital_controls.clear()
         self.digital_tags.clear()
-        self.analog_controls.clear()
-        self.analog_tags.clear()
-        self.analog_profile_running.clear()
-        self.analog_profile_directions.clear()
 
     def generate_signals(self):
+        if self.is_rebuilding:
+            LOGGER.info("Signal generation suppressed during import rebuild")
+            return False
         self.tag_runtime.sync(getattr(self, "tags", []))
         invalid_tags = get_invalid_tags_for_brand(self)
         for tag in invalid_tags:
@@ -382,8 +451,11 @@ class PLCSimulator:
         for i, tag in enumerate(get_input_bool_tags(self)):
             create_digital_row(self, i, tag=tag)
 
-        for i, tag in enumerate(get_input_analog_tags(self)):
-            create_analog_row(self, i, tag=tag)
+        cancel_analog_refresh(self)
+        self._dirty_tabs.add("Entradas Analógicas")
+        LOGGER.info("Tab marked dirty tab=Entradas Analógicas")
+        if self.tabs.get() == "Entradas Analógicas":
+            refresh_analog_tab(self, reset_page=True)
 
         if hasattr(self, "feedback_table"):
             refresh_feedback_table(self)
@@ -409,6 +481,83 @@ class PLCSimulator:
                 text=f"● {len(invalid_tags)} TAG(S) INCOMPATÍVEL(IS)",
                 text_color="orange",
             )
+        return True
+
+    def refresh_after_import(self, on_complete, on_error):
+        """Rebuild runtime and Tag Manager; defer all heavy tabs until opened."""
+        chunk_size = 25
+
+        def schedule(callback):
+            if self._closing:
+                return
+            job = None
+            def run():
+                self._rebuild_after_jobs.discard(job)
+                if self._closing:
+                    return
+                try:
+                    callback()
+                except Exception as error:
+                    self._cancel_rebuild_jobs()
+                    on_error(error)
+            job = self.schedule_job(1, run)
+            self._rebuild_after_jobs.add(job)
+
+        def runtime():
+            self.tag_runtime.sync(self.tags)
+            for tag in get_invalid_tags_for_brand(self):
+                self.tag_runtime.invalidate(tag.name)
+            LOGGER.info("CSV import stage: runtime cache rebuilt tags=%d", len(self.tags))
+            mark_dirty_and_refresh_tags()
+
+        def mark_dirty_and_refresh_tags():
+            for name in ("Entradas Digitais", "Entradas Analógicas", "Dashboard", "Alarmes", "Trends"):
+                self._dirty_tabs.add(name)
+                LOGGER.info("CSV import stage: tab marked dirty tab=%s", name)
+            if self._tag_manager_initialized:
+                def rebuild_tag_manager(done):
+                    for widget in self.tag_table.winfo_children():
+                        widget.destroy()
+
+                    def build(start=0):
+                        end = min(start + chunk_size, len(self.tags))
+                        for tag in self.tags[start:end]:
+                            create_tag_row(self, tag)
+                        if end < len(self.tags):
+                            schedule(lambda: build(end))
+                        else:
+                            update_tag_database_validation(self)
+                            done()
+                    build()
+                LOGGER.info("CSV import stage: UI tab refresh started tab=Tag Manager")
+                rebuild_tag_manager(lambda: (LOGGER.info("CSV import stage: UI tab refresh completed tab=Tag Manager"), on_complete()))
+            else:
+                on_complete()
+
+        schedule(runtime)
+
+    def _refresh_dirty_digital_tab(self):
+        for widget in self.digital_scroll.winfo_children():
+            widget.destroy()
+        self.digital_states.clear()
+        self.digital_controls.clear()
+        self.digital_tags.clear()
+        for index, tag in enumerate(get_input_bool_tags(self)):
+            create_digital_row(self, index, tag=tag)
+        self._dirty_tabs.discard("Entradas Digitais")
+        LOGGER.info("Lazy refresh complete tab=Entradas Digitais")
+
+    def cancel_pending_tab_refreshes(self):
+        self._cancel_rebuild_jobs()
+        cancel_analog_refresh(self)
+
+    def _cancel_rebuild_jobs(self):
+        for job in tuple(self._rebuild_after_jobs):
+            try:
+                self.cancel_job(job)
+            except TclError:
+                pass
+        self._rebuild_after_jobs.clear()
     
     def update_pid_sources(self):
         if not hasattr(self, "pid_pv_menu") or not hasattr(self, "pid_out_menu"):
@@ -471,9 +620,9 @@ class PLCSimulator:
         tag_identity = id(tag)
         previous_callback = self.pending_pulse_callbacks.pop(tag_identity, None)
         if previous_callback is not None:
-            self.app.after_cancel(previous_callback)
+            self.cancel_job(previous_callback)
 
-        callback_id = self.app.after(
+        callback_id = self.schedule_job(
             pulse_ms,
             lambda: self._finish_digital_pulse(tag)
         )
@@ -532,8 +681,14 @@ class PLCSimulator:
         return real_state
 
     def update_analog(self, index, value):
+        if self.is_rebuilding:
+            LOGGER.debug("Analog value callback ignored during rebuild index=%d", index)
+            return None
         item = self.analog_controls[index]
         tag = self.analog_tags[index]
+
+        if not item.get("interactive", True):
+            return None
 
         if item["profile_mode"].get() != "Manual":
             current_value = self.tag_runtime.get_value(tag.name, 0)
@@ -543,6 +698,11 @@ class PLCSimulator:
         self.write_analog_by_index(index, int(float(value)))
 
     def write_analog_by_index(self, index, value):
+        if self.is_rebuilding:
+            LOGGER.debug("Analog write ignored during rebuild index=%d", index)
+            return None
+        if not self.analog_controls[index].get("interactive", True):
+            return None
         tag = self.analog_tags[index]
 
         if not self.is_online():
@@ -580,6 +740,8 @@ class PLCSimulator:
         return real_value
 
     def start_cyclic_read(self):
+        if self.is_closing:
+            return
         if not self.cyclic_read_enabled:
             return
 
@@ -600,7 +762,7 @@ class PLCSimulator:
             self.status_label.configure(text="● ERRO LEITURA", text_color="orange")
             LOGGER.exception("Cyclic PLC read failed")
 
-        self.app.after(500, self.start_cyclic_read)
+        self.schedule_job(500, self.start_cyclic_read)
 
     def update_runtime_widgets(self):
         for index, tag in enumerate(self.digital_tags):
@@ -627,12 +789,15 @@ class PLCSimulator:
         item["live"].configure(text="1" if state else "0")
 
     def update_analog_ui(self, index, value, source=None):
+        if self.is_rebuilding:
+            return
         item = self.analog_controls[index]
         tag = self.analog_tags[index]
 
         if source is not None:
             self.tag_runtime.update(tag.name, value, source)
-        item["slider"].set(value)
+        if item.get("interactive", True):
+            item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")
         item["live"].configure(text=str(value))
 
@@ -651,7 +816,8 @@ class PLCSimulator:
             self.write_digital_state(i, False)
 
         for i, _item in enumerate(self.analog_controls):
-            self.write_analog_by_index(i, 0)
+            if _item.get("interactive", True):
+                self.write_analog_by_index(i, 0)
 
         self.status_label.configure(text="● RESET OK", text_color="lime")
         update_dashboard(self, "Reset executado")
@@ -735,8 +901,19 @@ class PLCSimulator:
             "O projeto tem alterações não guardadas. Fechar sem guardar?",
         ):
             return
-        self._save_settings()
+        self.is_closing = True
+        self._closing = True
+        self.cyclic_read_enabled = False
+        self.pid_running = False
+        if hasattr(self, "trend_running"):
+            self.trend_running = False
+        for index in tuple(self.analog_profile_running):
+            self.analog_profile_running[index] = False
+        self.cancel_pending_tab_refreshes()
+        self.cancel_pending_jobs()
+        self.is_rebuilding = False
         self.plc_service.disconnect()
+        self._save_settings()
         LOGGER.info("Application window closed")
         self.app.destroy()
 

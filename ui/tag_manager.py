@@ -30,7 +30,9 @@ def _open_csv_text(file_path):
     data = Path(file_path).read_bytes()
     for encoding in CSV_ENCODINGS:
         try:
-            return StringIO(data.decode(encoding), newline="")
+            text = data.decode(encoding)
+            LOGGER.info("CSV import stage: file decoded encoding=%s bytes=%d", encoding, len(data))
+            return StringIO(text, newline="")
         except UnicodeDecodeError:
             continue
     raise CSVEncodingError(CSV_ENCODING_ERROR)
@@ -137,12 +139,13 @@ def create_tag_manager_tab(app):
         width=130
     ).pack(side="left", padx=10)
 
-    ctk.CTkButton(
+    app.tag_update_signals_button = ctk.CTkButton(
         controls,
         text="Atualizar Sinais",
         command=lambda: app.generate_signals(),
         width=130
-    ).pack(side="left", padx=5)
+    )
+    app.tag_update_signals_button.pack(side="left", padx=5)
 
     app.tag_import_csv_button = ctk.CTkButton(
         controls,
@@ -1149,6 +1152,13 @@ def apply_imported_tags(
     success_text,
     target_brand=None,
 ):
+    if hasattr(app, "cancel_pending_tab_refreshes"):
+        app.cancel_pending_tab_refreshes()
+    if getattr(app, "is_rebuilding", False):
+        LOGGER.info("CSV import superseded an active rebuild")
+        app.is_rebuilding = False
+
+    LOGGER.info("CSV import stage: rows parsed count=%d", len(imported_tags))
     names_valid, names_message = normalize_and_validate_tag_names(
         imported_tags
     )
@@ -1156,6 +1166,8 @@ def apply_imported_tags(
         LOGGER.warning("CSV import validation failed: %s", names_message)
         messagebox.showerror(error_title, CSV_FORMAT_ERROR)
         return False
+    LOGGER.info("CSV import stage: rows validated count=%d", len(imported_tags))
+    LOGGER.info("CSV import stage: tags staged count=%d", len(imported_tags))
 
     previous_tags = app.tags
     runtime_cache = getattr(app, "tag_runtime", None)
@@ -1174,43 +1186,87 @@ def apply_imported_tags(
         previous_brand = app.brand_menu.get()
         brand_changed = previous_brand != target_brand
 
-    try:
-        app.tags = imported_tags
-        refresh_tag_table(app)
-        if brand_changed:
-            app.brand_menu.set(target_brand)
-            app.update_brand(target_brand)
-        else:
-            app.generate_signals()
-    except Exception:
-        LOGGER.exception("CSV import could not be applied")
+    def set_import_state(active):
+        app.is_rebuilding = active
+        for name in (
+            "tag_import_csv_button", "tag_import_tia_csv_button",
+            "tag_import_schneider_csv_button", "tag_update_signals_button",
+        ):
+            button = getattr(app, name, None)
+            if button is not None:
+                try:
+                    button.configure(state="disabled" if active else "normal")
+                except Exception:
+                    LOGGER.debug("Import control was destroyed during state reset", exc_info=True)
+
+    def rollback(error):
+        LOGGER.error(
+            "CSV import could not be applied",
+            exc_info=(type(error), error, error.__traceback__),
+        )
         app.tags = previous_tags
-        try:
-            if brand_changed:
-                app.brand_menu.set(previous_brand)
+        if brand_changed:
+            app.brand_menu.set(previous_brand)
+            try:
+                # The guard prevents update_brand from starting its own rebuild.
                 app.update_brand(previous_brand)
+            except Exception:
+                LOGGER.exception("CSV import brand rollback failed")
+        if runtime_snapshot is not None and hasattr(runtime_cache, "restore"):
+            try:
+                runtime_cache.restore(runtime_snapshot, previous_tags)
+            except Exception:
+                LOGGER.exception("CSV import runtime rollback failed")
+        def recovery_complete():
+            set_import_state(False)
+
+        def recovery_failed(_error):
+            LOGGER.exception("CSV import UI rollback refresh failed")
+            set_import_state(False)
+
+        try:
+            if hasattr(app, "refresh_after_import"):
+                app.refresh_after_import(recovery_complete, recovery_failed)
             else:
                 app.generate_signals()
-            refresh_tag_table(app)
+                refresh_tag_table(app)
+                recovery_complete()
         except Exception:
             LOGGER.exception("CSV import UI rollback refresh failed")
-        finally:
-            if runtime_snapshot is not None and hasattr(runtime_cache, "restore"):
-                try:
-                    runtime_cache.restore(runtime_snapshot, previous_tags)
-                except Exception:
-                    LOGGER.exception("CSV import runtime rollback failed")
+            set_import_state(False)
         messagebox.showerror(
             error_title,
             "Import could not be completed. Your previous tags were restored.",
         )
-        return False
 
-    app.status_label.configure(
-        text=success_text,
-        text_color="lime",
-    )
-    LOGGER.info("CSV import completed: tags=%d", len(imported_tags))
+    def complete():
+        set_import_state(False)
+        app.status_label.configure(
+            text=f"● {len(imported_tags)} tags imported successfully",
+            text_color="lime",
+        )
+        LOGGER.info("CSV import stage: import completed tags=%d", len(imported_tags))
+
+    set_import_state(True)
+    if hasattr(app, "status_label"):
+        app.status_label.configure(text="● IMPORTING TAGS…", text_color="orange")
+
+    try:
+        app.tags = imported_tags
+        LOGGER.info("CSV import stage: tags applied count=%d", len(imported_tags))
+        if brand_changed:
+            app.brand_menu.set(target_brand)
+            app.update_brand(target_brand)
+        if hasattr(app, "refresh_after_import"):
+            app.refresh_after_import(complete, rollback)
+            return True
+        else:
+            app.generate_signals()
+            refresh_tag_table(app)
+    except Exception as error:
+        rollback(error)
+        return False
+    complete()
     return True
 
 
@@ -1360,6 +1416,9 @@ def create_tag_row(app, tag):
 def set_tag_flag(app, tag, field, value):
     setattr(tag, field, value)
 
+    if getattr(app, "is_rebuilding", False):
+        return
+
     if field == "enabled_sim":
         app.generate_signals()
     elif field == "enabled_trend" and hasattr(app, "trend_selector_frame"):
@@ -1435,11 +1494,11 @@ def get_input_bool_tags(app):
 
 
 def get_input_analog_tags(app):
+    """Return analog inputs for both interactive and PLC read-only rows."""
     return [
         tag for tag in app.tags
         if tag.direction == "Input"
         and tag.data_type in ["INT", "REAL"]
-        and tag.enabled_sim
         and is_tag_compatible(app, tag)
     ]
 

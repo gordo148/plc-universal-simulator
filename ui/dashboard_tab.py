@@ -132,7 +132,7 @@ def create_dashboard_tab(app):
 
     record_dashboard_event(app, "Dashboard ready")
     update_dashboard(app)
-    app.app.after(
+    app.schedule_job(
         DASHBOARD_REFRESH_MS,
         lambda: refresh_dashboard(app),
     )
@@ -314,8 +314,10 @@ def style_card(value_label, border_color):
 
 
 def refresh_dashboard(app):
+    if getattr(app, "is_closing", False):
+        return
     update_dashboard(app)
-    app.app.after(
+    app.schedule_job(
         DASHBOARD_REFRESH_MS,
         lambda: refresh_dashboard(app),
     )

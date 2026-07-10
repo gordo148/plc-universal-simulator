@@ -298,6 +298,7 @@ def test_alarm_evaluation_covers_hh_h_l_ll_and_bad_quality(monkeypatch):
         alarm_status_label=Recorder(),
         app=Scheduler(),
     )
+    app.schedule_job = app.app.after
     monkeypatch.setattr(alarm_tab, "record_dashboard_event", lambda *_args: None)
 
     cache.update("Level", 95.0)

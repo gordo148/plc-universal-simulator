@@ -154,6 +154,24 @@ def test_csv_imports_more_than_seventy_siemens_tags(tmp_path):
     assert tags[-1].name == "Tag_74"
 
 
+def test_csv_imports_five_hundred_mixed_siemens_tags(tmp_path):
+    path = tmp_path / "five_hundred_tags.csv"
+    rows = []
+    for index in range(500):
+        if index % 3 == 0:
+            rows.append(f"Bool{index},BOOL,Input,DBX{index // 8}.{index % 8},1,0,0,1\n")
+        elif index % 3 == 1:
+            rows.append(f"Int{index},INT,Input,DBW{index * 2},1,0,0,1\n")
+        else:
+            rows.append(f"Real{index},REAL,Input,DBD{index * 4},1,1,0,0\n")
+    path.write_text(CSV_HEADER + "".join(rows), encoding="utf-8")
+
+    tags = tag_manager.read_tags_csv(path, "Siemens")
+
+    assert len(tags) == 500
+    assert {tag.data_type for tag in tags} == {"BOOL", "INT", "REAL"}
+
+
 def test_excel_exported_csv_with_spreadsheet_columns_is_accepted(tmp_path):
     path = tmp_path / "excel_tags.csv"
     path.write_text(
@@ -268,11 +286,87 @@ def test_failed_ui_refresh_restores_tags_and_runtime_without_raising(monkeypatch
     assert result is False
     assert app.tags is original
     assert cache.snapshot() == original_snapshot
-    assert refresh_calls == 2
+    # Rollback performs one recovery refresh; the failed forward refresh must
+    # not be repeated recursively.
+    assert refresh_calls == 1
     assert errors == [(
         "Import error",
         "Import could not be completed. Your previous tags were restored.",
     )]
+
+
+class _ImportButton:
+    def __init__(self):
+        self.states = []
+
+    def configure(self, **kwargs):
+        if "state" in kwargs:
+            self.states.append(kwargs["state"])
+
+
+def _async_import_app(original, refresh):
+    button = _ImportButton()
+    return SimpleNamespace(
+        tags=original,
+        is_rebuilding=False,
+        refresh_after_import=refresh,
+        generate_signals=lambda: (_ for _ in ()).throw(
+            AssertionError("generate_signals must not run during staged import")
+        ),
+        status_label=SimpleNamespace(configure=lambda **_kwargs: None),
+        tag_import_csv_button=button,
+    ), button
+
+
+def test_staged_import_refreshes_once_without_recursive_generate(monkeypatch):
+    original = [TagDefinition("Old", "BOOL", "Input", "DBX0.0")]
+    imported = [
+        TagDefinition(f"Tag{i}", "BOOL", "Input", f"DBX{i // 8}.{i % 8}")
+        for i in range(73)
+    ]
+    refresh_calls = 0
+
+    def refresh(done, _failed):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        done()
+
+    app, button = _async_import_app(original, refresh)
+    monkeypatch.setattr(tag_manager.messagebox, "showerror", lambda *_args: None)
+
+    assert tag_manager.apply_imported_tags(app, imported, "Error", "Done") is True
+    assert refresh_calls == 1
+    assert app.tags is imported
+    assert app.is_rebuilding is False
+    assert button.states == ["disabled", "normal"]
+
+
+def test_staged_import_rolls_back_and_always_resets_state(monkeypatch):
+    original = [TagDefinition("Old", "BOOL", "Input", "DBX0.0")]
+    imported = [TagDefinition("New", "BOOL", "Input", "DBX1.0")]
+    refresh_calls = 0
+
+    def refresh(done, failed):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        if refresh_calls == 1:
+            failed(RuntimeError("refresh failed"))
+        else:
+            done()
+
+    errors = []
+    app, button = _async_import_app(original, refresh)
+    monkeypatch.setattr(
+        tag_manager.messagebox,
+        "showerror",
+        lambda *args: errors.append(args),
+    )
+
+    assert tag_manager.apply_imported_tags(app, imported, "Error", "Done") is True
+    assert app.tags is original
+    assert app.is_rebuilding is False
+    assert button.states[-1] == "normal"
+    assert errors
 
 
 def test_import_does_not_crash_when_refresh_and_rollback_refresh_fail(monkeypatch):

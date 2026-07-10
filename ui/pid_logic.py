@@ -69,6 +69,8 @@ def stop_pid(app):
 
 
 def run_pid_loop(app):
+    if getattr(app, "is_closing", False):
+        return
     if not app.pid_running:
         return
 
@@ -114,7 +116,7 @@ def run_pid_loop(app):
         if interval_ms < 100:
             interval_ms = 100
 
-        app.app.after(interval_ms, lambda: run_pid_loop(app))
+        app.schedule_job(interval_ms, lambda: run_pid_loop(app))
 
     except Exception as error:
         LOGGER.exception("PID execution failed")

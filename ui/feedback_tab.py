@@ -91,10 +91,12 @@ def create_feedback_row(app, tag):
 
 
 def scan_feedbacks(app):
+    if getattr(app, "is_closing", False):
+        return
     if hasattr(app, "feedback_rows"):
         update_feedback_values(app)
 
-    app.app.after(500, lambda: scan_feedbacks(app))
+    app.schedule_job(500, lambda: scan_feedbacks(app))
 
 
 def update_feedback_values(app):

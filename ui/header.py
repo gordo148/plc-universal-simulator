@@ -137,7 +137,7 @@ def create_header(app):
     app.create_simulator_options = lambda: create_simulator_options(app)
     app.create_siemens_options()
     update_top_status_bar(app)
-    app.app.after(
+    app.schedule_job(
         STATUS_REFRESH_MS,
         lambda: refresh_top_status_bar(app),
     )
@@ -167,8 +167,10 @@ def create_status_item(parent, title, value, column, color="white"):
 
 
 def refresh_top_status_bar(app):
+    if getattr(app, "is_closing", False):
+        return
     update_top_status_bar(app)
-    app.app.after(
+    app.schedule_job(
         STATUS_REFRESH_MS,
         lambda: refresh_top_status_bar(app),
     )

@@ -131,6 +131,8 @@ def clear_trend(app):
 
 
 def update_trend(app):
+    if getattr(app, "is_closing", False):
+        return
     if not app.trend_running:
         return
 
@@ -159,7 +161,7 @@ def update_trend(app):
             app.trend_data["tags"][name] = app.trend_data["tags"][name][-max_points:]
 
     redraw_trend(app)
-    app.app.after(1000, lambda: update_trend(app))
+    app.schedule_job(1000, lambda: update_trend(app))
 
 
 def _numeric_value(value):

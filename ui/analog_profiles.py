@@ -2,6 +2,8 @@ import random
 
 
 def start_profile(app, index):
+    if getattr(app, "is_rebuilding", False):
+        return
     item = app.analog_controls[index]
 
     mode = item["profile_mode"].get()
@@ -24,6 +26,10 @@ def stop_profile(app, index):
 
 
 def run_profile(app, index):
+    if getattr(app, "is_closing", False):
+        return
+    if getattr(app, "is_rebuilding", False):
+        return
     if not app.analog_profile_running.get(index, False):
         return
 
@@ -88,4 +94,4 @@ def run_profile(app, index):
         item["profile_status"].configure(text=error_text, text_color="orange")
         return
 
-    app.app.after(interval_ms, lambda: run_profile(app, index))
+    app.schedule_job(interval_ms, lambda: run_profile(app, index))

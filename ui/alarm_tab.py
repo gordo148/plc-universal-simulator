@@ -221,6 +221,8 @@ def start_alarm_scan(app):
 
 
 def scan_alarms(app):
+    if getattr(app, "is_closing", False):
+        return
     if not hasattr(app, "alarms"):
         return
 
@@ -257,7 +259,7 @@ def scan_alarms(app):
     update_alarm_table(app)
     update_alarm_status(app)
 
-    app.app.after(500, lambda: scan_alarms(app))
+    app.schedule_job(500, lambda: scan_alarms(app))
 
 
 def update_alarm_table(app):
