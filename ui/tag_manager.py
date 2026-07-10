@@ -692,15 +692,38 @@ def _format_missing_csv_columns_error(missing_fields, detected_columns):
     )
 
 
+def _read_normalized_csv_rows(file):
+    """Read the complete CSV and discard spreadsheet-only columns."""
+    rows = list(csv.reader(file, dialect=_read_csv_dialect(file)))
+    if not rows:
+        raise ValueError("CSV sem cabeçalho")
+
+    headers = [_normalize_csv_header(header) for header in rows[0]]
+    kept_indexes = [
+        index for index, header in enumerate(headers)
+        if header and not header.lower().startswith("unnamed")
+    ]
+    normalized_headers = [headers[index] for index in kept_indexes]
+
+    # csv.reader exposes surplus cells explicitly.  They have no header, so
+    # treat them like trailing empty/Unnamed spreadsheet columns.
+    normalized_rows = []
+    for line_number, row in enumerate(rows[1:], start=2):
+        padded_row = row + [""] * max(0, len(headers) - len(row))
+        normalized_rows.append((
+            line_number,
+            [padded_row[index] for index in kept_indexes],
+        ))
+
+    return normalized_headers, normalized_rows
+
+
 def read_tags_csv(file_path, brand=None):
     tags = []
 
     with _open_csv_text(file_path) as file:
-        reader = csv.DictReader(file, dialect=_read_csv_dialect(file))
-        if reader.fieldnames is None:
-            raise ValueError("CSV sem cabeçalho")
-
-        header_map, detected_columns = _build_csv_header_map(reader.fieldnames)
+        headers, rows = _read_normalized_csv_rows(file)
+        header_map, detected_columns = _build_csv_header_map(headers)
         missing_fields = [
             field for field in TAG_CSV_FIELDS
             if field not in header_map
@@ -710,6 +733,15 @@ def read_tags_csv(file_path, brand=None):
                 missing_fields,
                 detected_columns,
             ))
+        if len(headers) != len(TAG_CSV_FIELDS):
+            raise ValueError(
+                "CSV format invalid. Normalized rows must contain exactly "
+                f"{len(TAG_CSV_FIELDS)} required fields."
+            )
+
+        header_indexes = {
+            field: headers.index(header_map[field]) for field in TAG_CSV_FIELDS
+        }
 
         direction_names = {
             "input": "Input",
@@ -718,13 +750,18 @@ def read_tags_csv(file_path, brand=None):
             "internal": "Internal",
         }
 
-        for line_number, row in enumerate(reader, start=2):
-            if not any(str(value or "").strip() for value in row.values()):
+        for line_number, row in rows:
+            if len(row) != len(TAG_CSV_FIELDS):
+                raise ValueError(
+                    f"linha {line_number}: expected exactly "
+                    f"{len(TAG_CSV_FIELDS)} fields"
+                )
+            if not any(str(value or "").strip() for value in row):
                 continue
 
             try:
                 values = {
-                    field: str(row.get(header_map[field], "") or "").strip()
+                    field: str(row[header_indexes[field]] or "").strip()
                     for field in TAG_CSV_FIELDS
                 }
 
@@ -1121,6 +1158,12 @@ def apply_imported_tags(
         return False
 
     previous_tags = app.tags
+    runtime_cache = getattr(app, "tag_runtime", None)
+    runtime_snapshot = (
+        runtime_cache.snapshot()
+        if runtime_cache is not None and hasattr(runtime_cache, "snapshot")
+        else None
+    )
     previous_brand = None
     brand_changed = False
     if (
@@ -1139,16 +1182,28 @@ def apply_imported_tags(
             app.update_brand(target_brand)
         else:
             app.generate_signals()
-    except Exception as error:
+    except Exception:
         LOGGER.exception("CSV import could not be applied")
         app.tags = previous_tags
-        refresh_tag_table(app)
-        if brand_changed:
-            app.brand_menu.set(previous_brand)
-            app.update_brand(previous_brand)
-        else:
-            app.generate_signals()
-        messagebox.showerror(error_title, CSV_FORMAT_ERROR)
+        try:
+            if brand_changed:
+                app.brand_menu.set(previous_brand)
+                app.update_brand(previous_brand)
+            else:
+                app.generate_signals()
+            refresh_tag_table(app)
+        except Exception:
+            LOGGER.exception("CSV import UI rollback refresh failed")
+        finally:
+            if runtime_snapshot is not None and hasattr(runtime_cache, "restore"):
+                try:
+                    runtime_cache.restore(runtime_snapshot, previous_tags)
+                except Exception:
+                    LOGGER.exception("CSV import runtime rollback failed")
+        messagebox.showerror(
+            error_title,
+            "Import could not be completed. Your previous tags were restored.",
+        )
         return False
 
     app.status_label.configure(

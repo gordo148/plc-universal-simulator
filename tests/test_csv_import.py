@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.tag_model import TagDefinition
+from core.tag_runtime import RuntimeTagCache
 from ui import tag_manager
 
 
@@ -94,6 +95,32 @@ def test_csv_with_trailing_empty_column_is_accepted(tmp_path):
     assert tags[0].enabled_dashboard is True
 
 
+def test_csv_with_extra_trailing_row_value_is_accepted(tmp_path):
+    path = tmp_path / "tags_extra_value.csv"
+    path.write_text(
+        CSV_HEADER + "Tag1,BOOL,Input,DBX0.0,1,0,0,1,spreadsheet\n",
+        encoding="utf-8",
+    )
+
+    tags = tag_manager.read_tags_csv(path, "Siemens")
+
+    assert [tag.name for tag in tags] == ["Tag1"]
+
+
+def test_csv_imports_more_than_seventy_siemens_tags(tmp_path):
+    path = tmp_path / "many_siemens_tags.csv"
+    rows = [
+        f"Tag_{index:02d},BOOL,Input,DBX{index // 8}.{index % 8},1,0,0,0\n"
+        for index in range(75)
+    ]
+    path.write_text(CSV_HEADER + "".join(rows), encoding="cp1252")
+
+    tags = tag_manager.read_tags_csv(path, "Siemens")
+
+    assert len(tags) == 75
+    assert tags[-1].name == "Tag_74"
+
+
 def test_excel_exported_csv_with_spreadsheet_columns_is_accepted(tmp_path):
     path = tmp_path / "excel_tags.csv"
     path.write_text(
@@ -163,6 +190,84 @@ def test_invalid_csv_does_not_partially_replace_tags(tmp_path, monkeypatch):
 
     assert app.tags is original
     assert [tag.name for tag in app.tags] == ["Existing"]
+    assert errors
+
+
+def test_failed_ui_refresh_restores_tags_and_runtime_without_raising(monkeypatch):
+    original = [TagDefinition("Existing", "BOOL", "Input", "DBX1.0")]
+    imported = [TagDefinition("Imported", "BOOL", "Input", "DBX2.0")]
+    cache = RuntimeTagCache()
+    cache.sync(original)
+    cache.update("Existing", True)
+    original_snapshot = cache.snapshot()
+    refresh_calls = 0
+    generate_calls = 0
+
+    def refresh(_app):
+        nonlocal refresh_calls
+        refresh_calls += 1
+
+    def fail_after_runtime_mutation():
+        nonlocal generate_calls
+        generate_calls += 1
+        cache.sync(app.tags)
+        if generate_calls == 1:
+            raise RuntimeError("tab rebuild failed")
+
+    errors = []
+    app = SimpleNamespace(
+        tags=original,
+        tag_runtime=cache,
+        generate_signals=fail_after_runtime_mutation,
+        status_label=SimpleNamespace(configure=lambda **_kwargs: None),
+    )
+    monkeypatch.setattr(tag_manager, "refresh_tag_table", refresh)
+    monkeypatch.setattr(
+        tag_manager.messagebox,
+        "showerror",
+        lambda title, message: errors.append((title, message)),
+    )
+
+    result = tag_manager.apply_imported_tags(
+        app, imported, "Import error", "Imported"
+    )
+
+    assert result is False
+    assert app.tags is original
+    assert cache.snapshot() == original_snapshot
+    assert refresh_calls == 2
+    assert errors == [(
+        "Import error",
+        "Import could not be completed. Your previous tags were restored.",
+    )]
+
+
+def test_import_does_not_crash_when_refresh_and_rollback_refresh_fail(monkeypatch):
+    original = [TagDefinition("Existing", "BOOL", "Input", "DBX1.0")]
+    imported = [TagDefinition("Imported", "BOOL", "Input", "DBX2.0")]
+    errors = []
+    app = SimpleNamespace(
+        tags=original,
+        generate_signals=lambda: None,
+        status_label=SimpleNamespace(configure=lambda **_kwargs: None),
+    )
+    monkeypatch.setattr(
+        tag_manager,
+        "refresh_tag_table",
+        lambda _app: (_ for _ in ()).throw(RuntimeError("render failed")),
+    )
+    monkeypatch.setattr(
+        tag_manager.messagebox,
+        "showerror",
+        lambda title, message: errors.append((title, message)),
+    )
+
+    result = tag_manager.apply_imported_tags(
+        app, imported, "Import error", "Imported"
+    )
+
+    assert result is False
+    assert app.tags is original
     assert errors
 
 
