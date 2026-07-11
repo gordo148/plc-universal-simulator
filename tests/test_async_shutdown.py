@@ -88,6 +88,30 @@ def test_close_immediately_after_import_cancels_jobs_before_destroy():
     assert app.app.destroyed is True
 
 
+def test_close_disconnects_scroll_callbacks_before_root_destroy():
+    events = []
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: False
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: events.append("cancel-tabs")
+    app.plc_service = SimpleNamespace(disconnect=lambda: events.append("disconnect-plc"))
+    app._save_settings = lambda: events.append("save")
+    app.digital_scroll = SimpleNamespace(
+        disconnect_scroll_callbacks=lambda: events.append("disconnect-digital")
+    )
+    app.analog_scroll = SimpleNamespace(
+        disconnect_scroll_callbacks=lambda: events.append("disconnect-analog")
+    )
+    app.app.destroy = lambda: events.append("destroy-root")
+
+    main_window.PLCSimulator.on_close(app)
+
+    assert events.index("disconnect-digital") < events.index("destroy-root")
+    assert events.index("disconnect-analog") < events.index("destroy-root")
+
+
 def test_close_during_plc_polling_does_not_reschedule():
     app = scheduler_app()
     app.is_closing = True

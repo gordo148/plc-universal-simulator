@@ -22,7 +22,11 @@ from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
 
 from ui.header import create_header, SCHNEIDER_MODELS
-from ui.digital_tab import create_digital_row
+from ui.digital_tab import (
+    cancel_digital_refresh,
+    create_digital_tab,
+    refresh_digital_tab,
+)
 from ui.analog_tab import (
     begin_analog_refresh,
     cancel_analog_refresh,
@@ -245,12 +249,15 @@ class PLCSimulator:
         self.tab_alarms = self.tabs.add("Alarmes")
         self.tab_feedbacks = self.tabs.add("Feedbacks")
 
+        create_digital_tab(self)
         self.digital_scroll = SafeScrollableFrame(self.tab_digital)
         self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        self.digital_scroll_buttons = self.digital_scroll.install_navigation()
 
         create_analog_tab(self)
         self.analog_scroll = SafeScrollableFrame(self.tab_analog)
         self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        self.analog_scroll_buttons = self.analog_scroll.install_navigation()
 
     def _on_tab_changed(self):
         selected_tab = self.tabs.get()
@@ -458,9 +465,10 @@ class PLCSimulator:
             self.cancel_job(callback_id)
         self.pending_pulse_callbacks.clear()
 
-        for widget in self.digital_scroll.winfo_children():
-            widget.destroy()
-
+        for row in getattr(self, "digital_row_pool", []):
+            row["current_tag_index"] = None
+            row["tag"] = None
+            row["frame"].pack_forget()
         self.digital_states.clear()
         self.digital_controls.clear()
         self.digital_tags.clear()
@@ -474,16 +482,28 @@ class PLCSimulator:
         for tag in invalid_tags:
             self.tag_runtime.invalidate(tag.name)
 
-        self.clear_signal_frames()
-
-        for i, tag in enumerate(get_input_bool_tags(self)):
-            create_digital_row(self, i, tag=tag)
-
-        cancel_analog_refresh(self)
-        self._dirty_tabs.add("Entradas Analógicas")
-        LOGGER.info("Tab marked dirty tab=Entradas Analógicas")
-        if self.tabs.get() == "Entradas Analógicas":
-            refresh_analog_tab(self, reset_page=True)
+        signature = (
+            self.brand_menu.get(),
+            tuple((tag.name, tag.data_type, tag.direction, tag.address, tag.enabled_sim)
+                  for tag in self.tags),
+        )
+        structure_changed = signature != getattr(self, "_signal_structure_signature", None)
+        self._signal_structure_signature = signature
+        if structure_changed:
+            cancel_digital_refresh(self)
+            self._dirty_tabs.add("Entradas Digitais")
+            cancel_analog_refresh(self)
+            self._dirty_tabs.add("Entradas Analógicas")
+            LOGGER.info("Simulation tab structure changed; tabs marked dirty")
+            if hasattr(self, "tag_update_signals_button"):
+                self.tag_update_signals_button.configure(state="disabled")
+            selected = self.tabs.get()
+            if selected == "Entradas Digitais":
+                refresh_digital_tab(self, reset_page=True)
+            elif selected == "Entradas Analógicas":
+                refresh_analog_tab(self, reset_page=True)
+            elif hasattr(self, "tag_update_signals_button"):
+                self.tag_update_signals_button.configure(state="normal")
 
         if hasattr(self, "feedback_table"):
             refresh_feedback_table(self)
@@ -530,18 +550,11 @@ class PLCSimulator:
         self._rebuild_after_jobs.add(job)
 
     def _refresh_dirty_digital_tab(self):
-        for widget in self.digital_scroll.winfo_children():
-            widget.destroy()
-        self.digital_states.clear()
-        self.digital_controls.clear()
-        self.digital_tags.clear()
-        for index, tag in enumerate(get_input_bool_tags(self)):
-            create_digital_row(self, index, tag=tag)
-        self._dirty_tabs.discard("Entradas Digitais")
-        LOGGER.info("Lazy refresh complete tab=Entradas Digitais")
+        refresh_digital_tab(self, reset_page=True)
 
     def cancel_pending_tab_refreshes(self):
         self._cancel_rebuild_jobs()
+        cancel_digital_refresh(self)
         cancel_analog_refresh(self)
 
     def _cancel_rebuild_jobs(self):
@@ -904,6 +917,10 @@ class PLCSimulator:
             self.analog_profile_running[index] = False
         self.cancel_pending_tab_refreshes()
         self.cancel_pending_jobs()
+        for scroll_name in ("digital_scroll", "analog_scroll"):
+            scroll = getattr(self, scroll_name, None)
+            if scroll is not None:
+                scroll.disconnect_scroll_callbacks()
         self.is_rebuilding = False
         self.plc_service.disconnect()
         self._save_settings()

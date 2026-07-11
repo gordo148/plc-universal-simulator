@@ -103,8 +103,10 @@ def test_plc_only_analog_tags_create_read_only_rows(fake_ctk):
 
     assert len(app.analog_controls) == 500
     assert all(control["interactive"] is False for control in app.analog_controls)
-    assert all("slider" not in control for control in app.analog_controls)
-    assert all("profile_mode" not in control for control in app.analog_controls)
+    # Heavy controls remain allocated in the reusable pool but are hidden for
+    # PLC-only tags, allowing the row to be rebound without reconstruction.
+    assert all("slider" in control for control in app.analog_controls)
+    assert all("profile_mode" in control for control in app.analog_controls)
 
 
 def test_read_only_analog_row_accepts_runtime_updates(fake_ctk):
@@ -250,7 +252,18 @@ def test_lazy_analog_load_pages_and_batches_five_hundred_tags(monkeypatch):
     app.cancel_job = lambda job: main_window.PLCSimulator.cancel_job(app, job)
     app.analog_search_entry.value = ""
     monkeypatch.setattr(tag_manager, "get_input_analog_tags", lambda _app: tags)
-    monkeypatch.setattr(analog_tab, "create_analog_row", lambda _app, index, tag: created.append((index, tag)))
+    class RowFrame:
+        def pack(self, **_kwargs): pass
+        def pack_forget(self): pass
+
+    monkeypatch.setattr(
+        analog_tab, "create_analog_row_widgets",
+        lambda _app: {"frame": RowFrame(), "current_tag_index": None, "tag": None},
+    )
+    monkeypatch.setattr(
+        analog_tab, "bind_analog_row",
+        lambda _app, row, index, tag: created.append((index, tag)),
+    )
 
     analog_tab.refresh_analog_tab(app)
     batches = 0

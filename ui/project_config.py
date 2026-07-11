@@ -179,28 +179,30 @@ def build_project_data(app):
             "source_node": app.source_node_entry.get(),
         }
 
-    digital_inputs = []
+    digital_inputs_by_tag = dict(getattr(app, "_digital_settings_cache", {}))
     digital_tags = getattr(app, "digital_tags", [])
     for index, item in enumerate(getattr(app, "digital_controls", [])):
-        digital_inputs.append({
+        digital_inputs_by_tag[digital_tags[index].name] = {
             "tag": digital_tags[index].name,
             "mode": item["mode_menu"].get(),
             "pulse_ms": item["pulse_entry"].get(),
-        })
+        }
+    digital_inputs = list(digital_inputs_by_tag.values())
 
-    analog_profiles = []
+    analog_profiles_by_tag = dict(getattr(app, "_analog_profile_cache", {}))
     analog_tags = getattr(app, "analog_tags", [])
     for index, item in enumerate(getattr(app, "analog_controls", [])):
         if not item.get("interactive", True):
             continue
-        analog_profiles.append({
+        analog_profiles_by_tag[analog_tags[index].name] = {
             "tag": analog_tags[index].name,
             "mode": item["profile_mode"].get(),
             "min": item["min_entry"].get(),
             "max": item["max_entry"].get(),
             "step": item["step_entry"].get(),
             "interval_ms": item["interval_entry"].get(),
-        })
+        }
+    analog_profiles = list(analog_profiles_by_tag.values())
 
     alarms = [
         {
@@ -348,10 +350,13 @@ def _apply_project_data(app, project, show_error=True):
         refresh_tag_table(app)
         app.generate_signals()
 
-        _restore_digital_settings(
-            app,
-            project.get("runtime_settings", {}).get("digital_inputs", []),
-        )
+        digital_settings = project.get("runtime_settings", {}).get("digital_inputs", [])
+        if "Entradas Digitais" in getattr(app, "_dirty_tabs", set()) or getattr(
+            app, "_digital_rebuilding", False
+        ):
+            app._pending_digital_settings = copy.deepcopy(digital_settings)
+        else:
+            _restore_digital_settings(app, digital_settings)
         if "Entradas Analógicas" in getattr(app, "_dirty_tabs", set()):
             app._pending_analog_profiles = copy.deepcopy(
                 project.get("analog_profiles", [])
@@ -438,6 +443,7 @@ def _restore_digital_settings(app, settings):
         for item in settings
         if isinstance(item, dict)
     }
+    app._digital_settings_cache = dict(by_tag)
     for index, widget in enumerate(app.digital_controls):
         config = by_tag.get(app.digital_tags[index].name)
         if config is None:
@@ -454,6 +460,7 @@ def _restore_analog_profiles(app, profiles):
         for item in profiles
         if isinstance(item, dict)
     }
+    app._analog_profile_cache = dict(by_tag)
     for index, widget in enumerate(app.analog_controls):
         if not widget.get("interactive", True):
             continue
