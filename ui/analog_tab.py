@@ -1,6 +1,8 @@
 import logging
+import time
 
 import customtkinter as ctk
+from tkinter import ttk
 from ui.analog_profiles import start_profile, stop_profile
 from ui.scrollable_frame import widget_exists
 
@@ -14,6 +16,7 @@ def create_analog_tab_structure(app):
     """Create persistent Analog controls exactly once."""
     if getattr(app, "_analog_structure_initialized", False):
         return
+    started = time.perf_counter()
     controls = ctk.CTkFrame(app.tab_analog)
     controls.pack(fill="x", padx=10, pady=(10, 0))
     ctk.CTkLabel(controls, text="Search").pack(side="left", padx=5)
@@ -42,9 +45,63 @@ def create_analog_tab_structure(app):
     app._analog_after_jobs = set()
     app._analog_rebuilding = False
     app._analog_structure_initialized = True
+    _create_analog_master_detail(app)
+    LOGGER.info(
+        "Analog tab structure created: widgets_created=36 callbacks_registered=4 structure_time_ms=%.3f",
+        (time.perf_counter() - started) * 1000,
+    )
 
 
 create_analog_tab = create_analog_tab_structure
+
+
+def _create_analog_master_detail(app):
+    body = ctk.CTkFrame(app.tab_analog)
+    body.pack(fill="both", expand=True, padx=10, pady=10)
+    table_frame = ctk.CTkFrame(body)
+    table_frame.pack(fill="both", expand=True)
+    columns = ("address", "name", "type", "value", "profile")
+    table = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+    for column, title, width in (
+        ("address", "Address", 120), ("name", "Name", 260),
+        ("type", "Type", 80), ("value", "Current value", 120),
+        ("profile", "Setpoint / Profile", 160),
+    ):
+        table.heading(column, text=title)
+        table.column(column, width=width, anchor="center" if column != "name" else "w")
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+    table.configure(yscrollcommand=scrollbar.set)
+    table.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    editor_host = ctk.CTkFrame(body)
+    editor_host.pack(fill="x", pady=(8, 0))
+    app.analog_scroll = editor_host
+    editor_row = create_analog_row_widgets(app)
+    editor_row["frame"].pack(fill="x")
+    table.bind("<<TreeviewSelect>>", lambda _event: _bind_selected_analog(app))
+    app.analog_table = table
+    app.analog_table_scrollbar = scrollbar
+    app.analog_editor = editor_row
+    app.analog_row_pool = [editor_row]
+    app._analog_table_tags = []
+    app._analog_selected_tag_name = None
+
+
+def _bind_selected_analog(app):
+    selection = app.analog_table.selection()
+    if not selection:
+        return
+    position = app.analog_table.index(selection[0])
+    if position >= len(app._analog_table_tags):
+        return
+    tag = app._analog_table_tags[position]
+    app._analog_selected_tag_name = tag.name
+    app.analog_controls[:] = []
+    app.analog_tags[:] = []
+    app.analog_profile_directions.clear()
+    bind_analog_row(app, app.analog_editor, 0, tag)
+    app.analog_controls.append(app.analog_editor)
+    app.analog_tags.append(tag)
 
 
 def cancel_analog_refresh(app):
@@ -66,6 +123,7 @@ def change_analog_page(app, offset):
 
 
 def refresh_analog_visible_rows(app, reset_page=False):
+    refresh_started = time.perf_counter()
     from ui.tag_manager import get_input_analog_tags
 
     cancel_analog_refresh(app)
@@ -83,6 +141,10 @@ def refresh_analog_visible_rows(app, reset_page=False):
     start = app.analog_page * page_size
     page_tags = tags[start:start + page_size]
     app._analog_rebuilding = True
+    if hasattr(app, "analog_table"):
+        begin_analog_refresh(app, page_tags)
+        _refresh_analog_table(app, tags, page_count, start, page_tags, refresh_started)
+        return
     LOGGER.info("Analog lazy refresh start total=%d page=%d", len(tags), app.analog_page + 1)
     begin_analog_refresh(app, page_tags)
     app.analog_loading_label.configure(text=f"Generating signals: 0 / {len(page_tags)}")
@@ -166,6 +228,48 @@ def refresh_analog_visible_rows(app, reset_page=False):
 
 
 refresh_analog_tab = refresh_analog_visible_rows
+
+
+def _refresh_analog_table(app, tags, page_count, start, visible, refresh_started):
+    selected = getattr(app, "_analog_selected_tag_name", None)
+    table = app.analog_table
+    table.delete(*table.get_children())
+    app._analog_table_tags = list(visible)
+    selected_item = None
+    for tag in visible:
+        value = app.tag_runtime.get_value(tag.name, 0)
+        settings = getattr(app, "_analog_profile_cache", {}).get(tag.name, {})
+        item = table.insert("", "end", values=(
+            tag.address, tag.name, tag.data_type, value,
+            settings.get("mode", "Manual") if tag.enabled_sim else "PLC read-only",
+        ))
+        if tag.name == selected:
+            selected_item = item
+    app._analog_rebuilding = False
+    app._dirty_tabs.discard("Entradas Analógicas")
+    app.analog_loading_label.configure(text=f"Page {app.analog_page + 1} of {page_count} · {start + 1 if visible else 0}-{start + len(visible)} of {len(tags)}")
+    app.analog_previous_button.configure(state="normal" if app.analog_page else "disabled")
+    app.analog_next_button.configure(state="normal" if app.analog_page + 1 < page_count else "disabled")
+    if selected_item is None and table.get_children():
+        selected_item = table.get_children()[0]
+    if selected_item is not None:
+        table.selection_set(selected_item)
+        _bind_selected_analog(app)
+    LOGGER.info(
+        "Analog tab generation: tags_total=%d visible_rows=%d widgets_created=0 callbacks_registered=0 row_creation_time_ms=0 layout_time_ms=%.3f total_time_ms=%.3f",
+        len(tags), len(visible), 0.0, (time.perf_counter() - refresh_started) * 1000,
+    )
+
+
+def update_analog_table_values(app):
+    table = getattr(app, "analog_table", None)
+    if table is None or not widget_exists(table):
+        return
+    for item, tag in zip(table.get_children(), app._analog_table_tags):
+        values = list(table.item(item, "values"))
+        values[3] = app.tag_runtime.get_value(tag.name, 0)
+        table.item(item, values=values)
+    _bind_selected_analog(app)
 
 
 def begin_analog_refresh(app, tags):

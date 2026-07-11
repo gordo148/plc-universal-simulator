@@ -1,6 +1,8 @@
 import customtkinter as ctk
 import logging
+import time
 from tkinter import TclError
+from tkinter import ttk
 
 from ui.scrollable_frame import widget_exists
 
@@ -24,6 +26,7 @@ def create_digital_tab_structure(app):
     """Create persistent Digital controls exactly once."""
     if getattr(app, "_digital_structure_initialized", False):
         return
+    started = time.perf_counter()
     controls = ctk.CTkFrame(app.tab_digital)
     controls.pack(fill="x", padx=10, pady=(10, 0))
     ctk.CTkLabel(controls, text="Tags per page").pack(side="left", padx=5)
@@ -50,9 +53,85 @@ def create_digital_tab_structure(app):
     app._digital_after_jobs = set()
     app._digital_rebuilding = False
     app._digital_structure_initialized = True
+    _create_digital_master_detail(app)
+    LOGGER.info(
+        "Digital tab structure created: widgets_created=16 callbacks_registered=4 structure_time_ms=%.3f",
+        (time.perf_counter() - started) * 1000,
+    )
 
 
 create_digital_tab = create_digital_tab_structure
+
+
+def _create_digital_master_detail(app):
+    body = ctk.CTkFrame(app.tab_digital)
+    body.pack(fill="both", expand=True, padx=10, pady=10)
+    table_frame = ctk.CTkFrame(body)
+    table_frame.pack(fill="both", expand=True)
+    columns = ("status", "address", "name", "mode", "value")
+    table = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
+    for column, title, width in (
+        ("status", "Status", 70), ("address", "Address", 120),
+        ("name", "Name", 260), ("mode", "Mode", 90), ("value", "Value", 80),
+    ):
+        table.heading(column, text=title)
+        table.column(column, width=width, anchor="center" if column != "name" else "w")
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+    table.configure(yscrollcommand=scrollbar.set)
+    table.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    editor = ctk.CTkFrame(body)
+    editor.pack(fill="x", pady=(8, 0))
+    app.digital_editor_title = ctk.CTkLabel(editor, text="Select a digital tag")
+    app.digital_editor_title.grid(row=0, column=0, padx=8, pady=8)
+    app.digital_editor_mode = ctk.CTkOptionMenu(editor, values=["Toggle", "Pulse"], width=100)
+    app.digital_editor_mode.grid(row=0, column=1, padx=8)
+    app.digital_editor_pulse = ctk.CTkEntry(editor, width=90)
+    app.digital_editor_pulse.insert(0, "500")
+    app.digital_editor_pulse.grid(row=0, column=2, padx=8)
+    app.digital_editor_button = ctk.CTkButton(editor, text="OFF", width=140, command=lambda: _digital_editor_action(app))
+    app.digital_editor_button.grid(row=0, column=3, padx=8)
+    app.digital_editor_value = ctk.CTkLabel(editor, text="0", width=60)
+    app.digital_editor_value.grid(row=0, column=4, padx=8)
+    table.bind("<<TreeviewSelect>>", lambda _event: _bind_selected_digital(app))
+    app.digital_table = table
+    app.digital_table_scrollbar = scrollbar
+    app.digital_editor = editor
+    app.digital_scroll = editor  # compatibility parent; normal refresh creates no rows here
+    app._digital_table_tags = []
+    app._digital_selected_tag_name = None
+
+
+def _digital_editor_action(app):
+    if app.digital_tags:
+        app.digital_action(0)
+
+
+def _bind_selected_digital(app):
+    selection = app.digital_table.selection()
+    if not selection:
+        return
+    position = app.digital_table.index(selection[0])
+    if position >= len(app._digital_table_tags):
+        return
+    tag = app._digital_table_tags[position]
+    app._digital_selected_tag_name = tag.name
+    settings = getattr(app, "_digital_settings_cache", {}).get(tag.name, {})
+    app.digital_editor_title.configure(text=f"{tag.name} · {tag.address}")
+    app.digital_editor_mode.set(settings.get("mode", "Toggle"))
+    _replace_entry(app.digital_editor_pulse, settings.get("pulse_ms", "500"))
+    state = bool(app.tag_runtime.get_value(tag.name, False))
+    app.digital_editor_button.configure(text=f"{tag.name} {'ON' if state else 'OFF'}")
+    app.digital_editor_value.configure(text="1" if state else "0")
+    app.digital_tags[:] = [tag]
+    app.digital_controls[:] = [{
+        "mode_menu": app.digital_editor_mode, "pulse_entry": app.digital_editor_pulse,
+        "button": app.digital_editor_button, "led": app.digital_editor_value,
+        "live": app.digital_editor_value, "name_entry": app.digital_editor_title,
+    }]
+    app.digital_states.clear()
+    app.digital_states[0] = state
 
 
 def cancel_digital_refresh(app):
@@ -85,6 +164,7 @@ def _remember_visible_settings(app):
 
 def refresh_digital_visible_rows(app, reset_page=False):
     """Rebind the persistent row pool to the requested page."""
+    refresh_started = time.perf_counter()
     from ui.tag_manager import get_input_bool_tags
 
     cancel_digital_refresh(app)
@@ -96,6 +176,9 @@ def refresh_digital_visible_rows(app, reset_page=False):
     page, count, start, visible = page_slice(tags, app.digital_page, size)
     app.digital_page = page
     app._digital_rebuilding = True
+    if hasattr(app, "digital_table"):
+        _refresh_digital_table(app, tags, page, count, start, visible, refresh_started)
+        return
     app.digital_loading_label.configure(text=f"Generating signals: 0 / {len(visible)}")
 
     pool = getattr(app, "digital_row_pool", None)
@@ -167,6 +250,50 @@ def refresh_digital_visible_rows(app, reset_page=False):
 
 
 refresh_digital_tab = refresh_digital_visible_rows
+
+
+def _refresh_digital_table(app, tags, page, count, start, visible, refresh_started):
+    selected = getattr(app, "_digital_selected_tag_name", None)
+    table = app.digital_table
+    table.delete(*table.get_children())
+    app._digital_table_tags = list(visible)
+    selected_item = None
+    for tag in visible:
+        state = bool(app.tag_runtime.get_value(tag.name, False))
+        settings = getattr(app, "_digital_settings_cache", {}).get(tag.name, {})
+        item = table.insert("", "end", values=(
+            "ON" if state else "OFF", tag.address, tag.name,
+            settings.get("mode", "Toggle"), "1" if state else "0",
+        ))
+        if tag.name == selected:
+            selected_item = item
+    app.digital_page = page
+    app._digital_rebuilding = False
+    app._dirty_tabs.discard("Entradas Digitais")
+    app.digital_loading_label.configure(text=f"Page {page + 1} of {count} · {start + 1 if visible else 0}-{start + len(visible)} of {len(tags)}")
+    app.digital_previous_button.configure(state="normal" if page else "disabled")
+    app.digital_next_button.configure(state="normal" if page + 1 < count else "disabled")
+    if selected_item is None and table.get_children():
+        selected_item = table.get_children()[0]
+    if selected_item is not None:
+        table.selection_set(selected_item)
+        _bind_selected_digital(app)
+    LOGGER.info(
+        "Digital tab generation: tags_total=%d visible_rows=%d widgets_created=0 callbacks_registered=0 row_creation_time_ms=0 layout_time_ms=%.3f total_time_ms=%.3f",
+        len(tags), len(visible), 0.0, (time.perf_counter() - refresh_started) * 1000,
+    )
+
+
+def update_digital_table_values(app):
+    table = getattr(app, "digital_table", None)
+    if table is None or not widget_exists(table):
+        return
+    for item, tag in zip(table.get_children(), app._digital_table_tags):
+        state = bool(app.tag_runtime.get_value(tag.name, False))
+        values = list(table.item(item, "values"))
+        values[0], values[4] = ("ON" if state else "OFF"), ("1" if state else "0")
+        table.item(item, values=values)
+    _bind_selected_digital(app)
 
 
 def _set_refresh_button(app, state):

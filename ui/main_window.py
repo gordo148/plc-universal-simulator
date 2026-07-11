@@ -26,6 +26,7 @@ from ui.digital_tab import (
     cancel_digital_refresh,
     create_digital_tab,
     refresh_digital_tab,
+    update_digital_table_values,
 )
 from ui.analog_tab import (
     begin_analog_refresh,
@@ -34,6 +35,7 @@ from ui.analog_tab import (
     create_analog_row,
     finish_analog_refresh,
     refresh_analog_tab,
+    update_analog_table_values,
 )
 from ui.pid_tab import create_pid_tab
 from ui.pid_logic import start_pid as pid_start
@@ -250,14 +252,16 @@ class PLCSimulator:
         self.tab_feedbacks = self.tabs.add("Feedbacks")
 
         create_digital_tab(self)
-        self.digital_scroll = SafeScrollableFrame(self.tab_digital)
-        self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.digital_scroll_buttons = self.digital_scroll.install_navigation()
+        if not hasattr(self, "digital_scroll"):
+            self.digital_scroll = SafeScrollableFrame(self.tab_digital)
+            self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+            self.digital_scroll_buttons = self.digital_scroll.install_navigation()
 
         create_analog_tab(self)
-        self.analog_scroll = SafeScrollableFrame(self.tab_analog)
-        self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.analog_scroll_buttons = self.analog_scroll.install_navigation()
+        if not hasattr(self, "analog_scroll"):
+            self.analog_scroll = SafeScrollableFrame(self.tab_analog)
+            self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+            self.analog_scroll_buttons = self.analog_scroll.install_navigation()
 
     def _on_tab_changed(self):
         selected_tab = self.tabs.get()
@@ -596,7 +600,8 @@ class PLCSimulator:
 
     def update_digital_name(self, index):
         item = self.digital_controls[index]
-        name = item["name_entry"].get()
+        name_widget = item.get("name_entry")
+        name = name_widget.get() if hasattr(name_widget, "get") else tag.name
         state = self.digital_states.get(index, False)
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
 
@@ -771,6 +776,8 @@ class PLCSimulator:
         self.schedule_job(500, self.start_cyclic_read)
 
     def update_runtime_widgets(self):
+        update_digital_table_values(self)
+        update_analog_table_values(self)
         for index, tag in enumerate(self.digital_tags):
             value = self.tag_runtime.get_value(tag.name)
             if value is not None:
@@ -919,8 +926,11 @@ class PLCSimulator:
         self.cancel_pending_jobs()
         for scroll_name in ("digital_scroll", "analog_scroll"):
             scroll = getattr(self, scroll_name, None)
-            if scroll is not None:
-                scroll.disconnect_scroll_callbacks()
+            disconnect_scroll_callbacks = getattr(
+                scroll, "disconnect_scroll_callbacks", None
+            )
+            if disconnect_scroll_callbacks is not None:
+                disconnect_scroll_callbacks()
         self.is_rebuilding = False
         self.plc_service.disconnect()
         self._save_settings()

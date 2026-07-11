@@ -54,14 +54,27 @@ def test_tab_structure_creation_is_idempotent(monkeypatch):
         def pack(self, **_kwargs):
             pass
 
+        def grid(self, **_kwargs):
+            pass
+
         def bind(self, *_args, **_kwargs):
             pass
 
         def set(self, value):
             self.value = value
 
+        def insert(self, *_args):
+            pass
+
     for name in ("CTkFrame", "CTkLabel", "CTkEntry", "CTkOptionMenu", "CTkButton"):
         monkeypatch.setattr(digital_tab.ctk, name, Widget)
+    class Table(Widget):
+        def heading(self, *_args, **_kwargs): pass
+        def column(self, *_args, **_kwargs): pass
+        def configure(self, **_kwargs): pass
+        def yview(self, *_args): pass
+    monkeypatch.setattr(digital_tab.ttk, "Treeview", Table)
+    monkeypatch.setattr(digital_tab.ttk, "Scrollbar", Table)
 
     app = SimpleNamespace(tab_digital=object())
     digital_tab.create_digital_tab_structure(app)
