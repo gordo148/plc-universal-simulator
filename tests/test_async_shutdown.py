@@ -133,3 +133,49 @@ def test_close_while_simulation_profile_running_is_safe():
     analog_profiles.run_profile(app, 0)
 
     assert calls == []
+
+
+def test_on_close_executes_only_once():
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: False
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    saves, destroys = [], []
+    app._save_settings = lambda: saves.append(True)
+    app.app.destroy = lambda: destroys.append(True)
+
+    main_window.PLCSimulator.on_close(app)
+    main_window.PLCSimulator.on_close(app)
+
+    assert saves == [True]
+    assert destroys == [True]
+
+
+def test_clean_close_does_not_auto_save_project():
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: False
+    app.save_project = lambda: (_ for _ in ()).throw(AssertionError("project auto-save"))
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    app._save_settings = lambda: None
+    main_window.PLCSimulator.on_close(app)
+    assert app.app.destroyed is True
+
+
+def test_worker_join_is_bounded_and_not_repeated():
+    joins = []
+    worker = SimpleNamespace(
+        name="test-worker", join=lambda timeout: joins.append(timeout),
+        is_alive=lambda: False,
+    )
+    event = SimpleNamespace(set=lambda: None)
+    app = SimpleNamespace(worker_thread=worker, polling_thread=worker, worker_stop_event=event)
+    main_window.PLCSimulator._stop_shutdown_workers(app)
+    assert len(joins) == 1
+    assert 0 <= joins[0] <= 0.25

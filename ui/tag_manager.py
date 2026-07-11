@@ -9,6 +9,7 @@ import sys
 from tkinter import filedialog, messagebox, ttk
 
 from core.tag_model import Tag
+from ui.table_utils import clear_entry, debounce
 
 
 LOGGER = logging.getLogger(__name__)
@@ -207,6 +208,31 @@ def create_tag_manager_tab(app):
     )
     app.tag_database_validation_label.pack(fill="x", padx=15, pady=(0, 5))
 
+    search_row = ctk.CTkFrame(frame, fg_color="transparent")
+    search_row.pack(fill="x", padx=8, pady=(2, 4))
+    ctk.CTkLabel(search_row, text="Search:").pack(side="left", padx=(4, 6))
+    app.tag_search_entry = ctk.CTkEntry(
+        search_row, width=320,
+        placeholder_text="Name, address, type or direction",
+    )
+    app.tag_search_entry.pack(side="left", padx=(0, 4))
+    app.tag_search_clear_button = ctk.CTkButton(
+        search_row, text="×", width=32,
+        command=lambda: clear_tag_search(app),
+    )
+    app.tag_search_clear_button.pack(side="left", padx=(0, 10))
+    app.tag_search_count_label = ctk.CTkLabel(search_row, text="0 tags")
+    app.tag_search_count_label.pack(side="left", padx=6)
+    app.tag_search_entry.bind(
+        "<KeyRelease>", lambda event: on_tag_search_key(app, event),
+    )
+    app.tag_search_entry.bind(
+        "<Return>", lambda _event: select_first_filtered_tag(app),
+    )
+    app.app.bind(
+        "<Control-f>", lambda _event: focus_tag_search(app), add="+",
+    )
+
     configure_tag_table_style(frame)
     table_frame = ctk.CTkFrame(
         frame, fg_color="#242424", border_width=1, border_color="#454545",
@@ -271,6 +297,51 @@ def create_tag_manager_tab(app):
 
     refresh_tag_table(app)
     update_tag_address_context(app)
+
+
+def filter_tag_collection(tags, query):
+    """Return a separate filtered view; never mutate the source collection."""
+    query = str(query or "").strip().casefold()
+    if not query:
+        return list(tags)
+    return [
+        tag for tag in tags
+        if query in tag.name.casefold()
+        or query in tag.address.casefold()
+        or query in tag.data_type.casefold()
+        or query in tag.direction.casefold()
+    ]
+
+
+def on_tag_search_key(app, event):
+    if getattr(event, "keysym", "") == "Escape":
+        clear_tag_search(app)
+        return "break"
+    debounce(
+        app, "tag_search", 150,
+        lambda: refresh_tag_table(app, view_only=True),
+    )
+
+
+def clear_tag_search(app):
+    clear_entry(app.tag_search_entry)
+    refresh_tag_table(app, view_only=True)
+    app.tag_search_entry.focus_set()
+
+
+def focus_tag_search(app):
+    app.tag_search_entry.focus_set()
+    app.tag_search_entry.select_range(0, "end")
+    return "break"
+
+
+def select_first_filtered_tag(app):
+    children = app.tag_table.get_children()
+    if children:
+        app.tag_table.selection_set(children[0])
+        app.tag_table.focus(children[0])
+        app.tag_table.see(children[0])
+    return "break"
 
 
 def configure_tag_table_style(widget):
@@ -417,6 +488,7 @@ def add_tag(app):
     )
 
     app.tags.append(tag)
+    mark_project_modified(app)
     refresh_tag_table(app)
     app.tag_address_manual_edit = False
     app.generate_signals()
@@ -1367,6 +1439,7 @@ def apply_imported_tags(
 
     try:
         app.tags = imported_tags
+        mark_project_modified(app)
         LOGGER.info("CSV import stage: tags applied count=%d", len(imported_tags))
         if brand_changed:
             app.brand_menu.set(target_brand)
@@ -1449,7 +1522,15 @@ def export_csv_template(app):
     LOGGER.info("CSV template exported: %s", destination_path)
 
 
-def refresh_tag_table(app):
+def refresh_tag_table(app, view_only=False):
+    selected = app.tag_table.selection()
+    selected_iid = selected[0] if selected else None
+    query = (
+        app.tag_search_entry.get().strip()
+        if hasattr(app, "tag_search_entry") else ""
+    )
+    if query and selected_iid:
+        app._tag_search_restore_iid = selected_iid
     children = app.tag_table.get_children()
     if children:
         app.tag_table.delete(*children)
@@ -1457,11 +1538,36 @@ def refresh_tag_table(app):
     app.tag_table.tag_configure("even", background="#242424")
     app.tag_table.tag_configure("odd", background="#2b2b2b")
 
-    for index, tag in enumerate(app.tags):
+    filtered = filter_tag_collection(app.tags, query)
+    indices = {id(tag): index for index, tag in enumerate(app.tags)}
+    for visible_index, tag in enumerate(filtered):
+        index = indices[id(tag)]
         create_tag_row(app, tag, index)
 
-    update_master_tag_option_states(app)
-    update_tag_database_validation(app)
+    visible_iids = set(app.tag_table.get_children())
+    candidate = selected_iid if selected_iid in visible_iids else None
+    if not query:
+        restore = getattr(app, "_tag_search_restore_iid", None)
+        if restore in visible_iids:
+            candidate = restore
+            app._tag_search_restore_iid = None
+    if candidate is None and visible_iids:
+        candidate = app.tag_table.get_children()[0]
+    if candidate is not None:
+        app.tag_table.selection_set(candidate)
+        app.tag_table.focus(candidate)
+        app.tag_table.see(candidate)
+
+    if hasattr(app, "tag_search_count_label"):
+        text = (
+            f"Showing {len(filtered)} of {len(app.tags)} tags"
+            if query else f"{len(app.tags)} tags"
+        )
+        app.tag_search_count_label.configure(text=text)
+
+    if not view_only:
+        update_master_tag_option_states(app)
+        update_tag_database_validation(app)
 
 
 def create_tag_row(app, tag, index=None):
@@ -1568,6 +1674,7 @@ def set_tag_flag(app, tag, field, value):
 def delete_tag(app, tag):
     if tag in app.tags:
         app.tags.remove(tag)
+        mark_project_modified(app)
 
     refresh_tag_table(app)
     app.generate_signals()

@@ -157,6 +157,8 @@ class PLCSimulator:
         self._rebuild_after_jobs = set()
         self._closing = False
         self.is_closing = False
+        self._shutdown_started = False
+        self._project_dirty = False
         self._pending_jobs = set()
         self._dirty_tabs = set()
         self._plc_values = {}
@@ -189,14 +191,14 @@ class PLCSimulator:
 
     def schedule_job(self, delay, callback):
         """Schedule and centrally track a callback that is safe during shutdown."""
-        if self.is_closing:
+        if self.is_closing or getattr(self, "_shutdown_started", False):
             return None
         job = None
 
         def guarded_callback():
             if job is not None:
                 self._pending_jobs.discard(job)
-            if self.is_closing:
+            if self.is_closing or getattr(self, "_shutdown_started", False):
                 return
             try:
                 callback()
@@ -754,7 +756,7 @@ class PLCSimulator:
         return real_value
 
     def start_cyclic_read(self):
-        if self.is_closing:
+        if self.is_closing or getattr(self, "_shutdown_started", False):
             return
         if not self.cyclic_read_enabled:
             return
@@ -907,8 +909,17 @@ class PLCSimulator:
 
     def _mark_project_saved(self):
         self._saved_project_snapshot = build_project_data(self)
+        self._project_dirty = False
+
+    def mark_project_dirty(self):
+        self._project_dirty = True
+
+    def mark_project_modified(self):
+        self.mark_project_dirty()
 
     def has_unsaved_changes(self):
+        if getattr(self, "_project_dirty", False):
+            return True
         saved = getattr(self, "_saved_project_snapshot", None)
         return saved is not None and build_project_data(self) != saved
 
@@ -925,21 +936,50 @@ class PLCSimulator:
             LOGGER.warning("Could not save application settings: %s", error)
 
     def on_close(self):
-        if self.has_unsaved_changes() and not messagebox.askyesno(
-            "Alterações não guardadas",
-            "O projeto tem alterações não guardadas. Fechar sem guardar?",
-        ):
+        if getattr(self, "_shutdown_started", False):
             return
-        self.is_closing = True
-        self._closing = True
-        self.cyclic_read_enabled = False
-        self.pid_running = False
-        if hasattr(self, "trend_running"):
-            self.trend_running = False
-        for index in tuple(self.analog_profile_running):
-            self.analog_profile_running[index] = False
-        self.cancel_pending_tab_refreshes()
-        self.cancel_pending_jobs()
+        self._shutdown_started = True
+        total_started = time.perf_counter()
+        timings = {}
+
+        def phase(name, callback):
+            started = time.perf_counter()
+            result = callback()
+            timings[name] = (time.perf_counter() - started) * 1000
+            return result
+
+        dirty = phase("tag_serialization", self.has_unsaved_changes)
+        if dirty:
+            discard = messagebox.askyesno(
+                "Alterações não guardadas",
+                "O projeto tem alterações não guardadas. Fechar sem guardar?",
+            )
+            if not discard:
+                self._shutdown_started = False
+                return
+        timings["project_save"] = 0.0  # Closing never auto-saves the project.
+
+        def set_closing():
+            self.is_closing = True
+            self._closing = True
+        phase("closing_flag", set_closing)
+        if len(getattr(self, "tags", [])) >= 1000:
+            status = getattr(self, "status_label", None)
+            if status is not None:
+                status.configure(text="Closing application...", text_color="orange")
+                try: self.app.update_idletasks()
+                except TclError: pass
+
+        phase("stop_polling", lambda: setattr(self, "cyclic_read_enabled", False))
+        def stop_profiles():
+            self.pid_running = False
+            if hasattr(self, "trend_running"): self.trend_running = False
+            for index in tuple(self.analog_profile_running):
+                self.analog_profile_running[index] = False
+        phase("stop_profiles_and_trends", stop_profiles)
+        phase("stop_workers", lambda: PLCSimulator._stop_shutdown_workers(self))
+        phase("cancel_after_callbacks", self.cancel_pending_tab_refreshes)
+        phase("cancel_remaining_callbacks", self.cancel_pending_jobs)
         for scroll_name in ("digital_scroll", "analog_scroll"):
             scroll = getattr(self, scroll_name, None)
             disconnect_scroll_callbacks = getattr(
@@ -948,10 +988,44 @@ class PLCSimulator:
             if disconnect_scroll_callbacks is not None:
                 disconnect_scroll_callbacks()
         self.is_rebuilding = False
-        self.plc_service.disconnect()
-        self._save_settings()
-        LOGGER.info("Application window closed")
-        self.app.destroy()
+        phase("plc_disconnect", self.plc_service.disconnect)
+        phase("settings_and_recent_save", self._save_settings)
+        phase("trend_cleanup", lambda: PLCSimulator._cleanup_trends_for_shutdown(self))
+        phase("root_destroy", self.app.destroy)
+        def flush_logs():
+            for handler in logging.getLogger().handlers:
+                try: handler.flush()
+                except Exception: pass
+        phase("logger_flush", flush_logs)
+        timings["total"] = (time.perf_counter() - total_started) * 1000
+        self._shutdown_timings = dict(timings)
+        LOGGER.info(
+            "Shutdown profiling: %s",
+            " ".join(f"{name}={value:.1f}ms" for name, value in timings.items()),
+        )
+
+    def _stop_shutdown_workers(self):
+        """Signal optional UI workers, then use one short bounded join each."""
+        workers = []
+        for name in ("worker_thread", "polling_thread", "import_thread"):
+            worker = getattr(self, name, None)
+            if worker is not None and worker not in workers:
+                workers.append(worker)
+        for event_name in ("worker_stop_event", "polling_stop_event", "import_stop_event"):
+            event = getattr(self, event_name, None)
+            if event is not None and hasattr(event, "set"): event.set()
+        deadline = time.perf_counter() + 1.0
+        for worker in workers:
+            remaining = max(0.0, deadline - time.perf_counter())
+            if hasattr(worker, "join"): worker.join(timeout=min(0.25, remaining))
+            if hasattr(worker, "is_alive") and worker.is_alive():
+                LOGGER.warning("Shutdown worker did not terminate: %s", getattr(worker, "name", worker))
+
+    def _cleanup_trends_for_shutdown(self):
+        figure = getattr(self, "trend_fig", None)
+        if figure is not None:
+            try: figure.clear()
+            except Exception: LOGGER.debug("Trend figure cleanup failed", exc_info=True)
 
     def show_about(self):
         messagebox.showinfo("About", get_about_text())

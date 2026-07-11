@@ -1,5 +1,6 @@
 import json
 
+from core.tag_model import TagDefinition
 from ui import project_config
 
 
@@ -15,6 +16,24 @@ def test_save_and_load_project_headlessly(tmp_path, project_app):
     assert staged["plc"]["brand"] == "Siemens"
     assert [tag["name"] for tag in staged["tags"]] == ["Run", "Speed"]
     assert staged["tags"][1]["data_type"] == "REAL"
+
+
+def test_5000_tags_are_serialized_and_written_once(tmp_path, project_app, monkeypatch):
+    project_app.tags = [
+        TagDefinition(f"T{i}", "BOOL", "Input", f"DBX{i // 8}.{i % 8}")
+        for i in range(5000)
+    ]
+    calls = []
+    original_dump = project_config.json.dump
+    monkeypatch.setattr(
+        project_config.json, "dump",
+        lambda payload, handle, **kwargs: (
+            calls.append(len(payload["tags"])),
+            original_dump(payload, handle, **kwargs),
+        )[1],
+    )
+    assert project_config._write_project(project_app, tmp_path / "large.simproject")
+    assert calls == [5000]
 
 
 def test_corrupted_project_is_rejected(tmp_path, monkeypatch):

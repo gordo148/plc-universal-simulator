@@ -26,7 +26,7 @@ def stop_profile(app, index):
 
 
 def run_profile(app, index):
-    if getattr(app, "is_closing", False):
+    if getattr(app, "is_closing", False) or getattr(app, "_shutdown_started", False):
         return
     if getattr(app, "is_rebuilding", False):
         return
