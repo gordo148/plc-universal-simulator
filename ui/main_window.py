@@ -159,6 +159,8 @@ class PLCSimulator:
         self.is_closing = False
         self._pending_jobs = set()
         self._dirty_tabs = set()
+        self._plc_values = {}
+        self._simulated_values = {}
 
         self.cyclic_read_enabled = False
 
@@ -600,6 +602,7 @@ class PLCSimulator:
 
     def update_digital_name(self, index):
         item = self.digital_controls[index]
+        tag = self.digital_tags[index]
         name_widget = item.get("name_entry")
         name = name_widget.get() if hasattr(name_widget, "get") else tag.name
         state = self.digital_states.get(index, False)
@@ -795,7 +798,14 @@ class PLCSimulator:
         self.digital_states[index] = state
         if source is not None:
             self.tag_runtime.update(tag.name, state, source)
-        name = item["name_entry"].get()
+        runtime = self.tag_runtime.get(tag.name)
+        actual_source = source or (runtime.source if runtime else None)
+        if actual_source == RuntimeValueSource.SIMULATION:
+            getattr(self, "_simulated_values", {}).update({tag.name: bool(state)})
+        else:
+            getattr(self, "_plc_values", {}).update({tag.name: bool(state)})
+        name_widget = item.get("name_entry")
+        name = name_widget.get() if hasattr(name_widget, "get") else tag.name
 
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
         item["led"].configure(text="●", text_color="lime" if state else "gray")
@@ -809,6 +819,12 @@ class PLCSimulator:
 
         if source is not None:
             self.tag_runtime.update(tag.name, value, source)
+        runtime = self.tag_runtime.get(tag.name)
+        actual_source = source or (runtime.source if runtime else None)
+        if actual_source == RuntimeValueSource.SIMULATION:
+            getattr(self, "_simulated_values", {}).update({tag.name: value})
+        else:
+            getattr(self, "_plc_values", {}).update({tag.name: value})
         if item.get("interactive", True):
             item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")

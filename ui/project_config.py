@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import tempfile
-from tkinter import filedialog, messagebox
+from tkinter import TclError, filedialog, messagebox
 
 from core.tag_model import Tag
 from core.version import APP_NAME, APP_VERSION
@@ -233,6 +233,23 @@ def build_project_data(app):
         ],
         "runtime_settings": {
             "digital_inputs": digital_inputs,
+            "ui_state": {
+                "selected_tab": app.tabs.get() if hasattr(app, "tabs") else "Dashboard",
+                "digital": {
+                    "selected_row": getattr(app, "_digital_selected_tag_name", None),
+                    "sort_column": getattr(app, "_digital_sort_column", "name"),
+                    "sort_descending": getattr(app, "_digital_sort_descending", False),
+                    "page_size": app.digital_page_size_menu.get() if hasattr(app, "digital_page_size_menu") else "50",
+                    "search": app.digital_search_entry.get() if hasattr(app, "digital_search_entry") else "",
+                },
+                "analog": {
+                    "selected_row": getattr(app, "_analog_selected_tag_name", None),
+                    "sort_column": getattr(app, "_analog_sort_column", "name"),
+                    "sort_descending": getattr(app, "_analog_sort_descending", False),
+                    "page_size": app.analog_page_size_menu.get() if hasattr(app, "analog_page_size_menu") else "50",
+                    "search": app.analog_search_entry.get() if hasattr(app, "analog_search_entry") else "",
+                },
+            },
         },
         "alarms": alarms,
         "pid": pid_settings,
@@ -370,6 +387,9 @@ def _apply_project_data(app, project, show_error=True):
             app.ensure_alarm_tab()
         reload_alarms(app, project.get("alarms", []))
         _restore_trends(app, project.get("trends", {}))
+        _restore_simulation_ui_state(
+            app, project.get("runtime_settings", {}).get("ui_state", {})
+        )
 
         from ui.dashboard_tab import clear_dashboard_events, update_dashboard
         clear_dashboard_events(app)
@@ -435,6 +455,32 @@ def _restore_connection_settings(app, brand, settings):
     _set_entry(app.coil_start_entry, settings.get("coil_start", "0"))
     _set_entry(app.reg_start_entry, settings.get("register_start", "0"))
     app.schneider_info.configure(text=SCHNEIDER_MODELS[model]["description"])
+
+
+def _restore_simulation_ui_state(app, state):
+    """Restore optional UI-only state without changing the project schema version."""
+    if not isinstance(state, dict):
+        return
+    from ui.analog_tab import refresh_analog_tab
+    from ui.digital_tab import refresh_digital_tab
+    for prefix, refresh in (("digital", refresh_digital_tab), ("analog", refresh_analog_tab)):
+        tab_state = state.get(prefix, {})
+        if not isinstance(tab_state, dict): continue
+        entry = getattr(app, f"{prefix}_search_entry", None)
+        if entry is not None:
+            _set_entry(entry, tab_state.get("search", ""))
+        menu = getattr(app, f"{prefix}_page_size_menu", None)
+        size = str(tab_state.get("page_size", "50"))
+        if menu is not None and size in ("25", "50", "100", "250", "All"):
+            menu.set(size)
+        setattr(app, f"_{prefix}_sort_column", tab_state.get("sort_column", "name"))
+        setattr(app, f"_{prefix}_sort_descending", bool(tab_state.get("sort_descending", False)))
+        setattr(app, f"_{prefix}_selected_tag_name", tab_state.get("selected_row"))
+        refresh(app, reset_page=True)
+    selected_tab = state.get("selected_tab")
+    if selected_tab and hasattr(app, "tabs"):
+        try: app.tabs.set(selected_tab)
+        except (ValueError, TclError): pass
 
 
 def _restore_digital_settings(app, settings):

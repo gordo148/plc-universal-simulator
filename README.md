@@ -131,6 +131,40 @@ suggestions follow the selected PLC brand. In Rockwell mode the address field
 is hidden and the symbolic PLC address is the tag name. Simulator mode accepts
 any non-empty internal address.
 
+## Digital and Analog simulation workspace
+
+The simulation tabs use a master-detail layout designed for projects with
+thousands of tags. A lightweight, paginated table shows the signal database;
+only the selected tag owns a full editor, so changing pages or selecting a row
+does not create another set of buttons, entries, or sliders.
+
+- Search filters live after a short debounce and matches name, address, or data
+  type. Use the **×** button or **Esc** to clear it.
+- Click any column heading to alternate ascending and descending sorting. The
+  active heading displays ▲ or ▼.
+- Digital rows show live ON/OFF state, PLC and simulated values, and whether
+  the values differ. The editor provides Toggle/Pulse mode, pulse duration,
+  immediate toggle, and write controls.
+- Analog rows show current value, profile, and PLC/simulation difference. The
+  selected-tag editor provides exact-value entry, slider, limits, step,
+  interval, simulation mode, and profile Start/Stop controls.
+- Changed runtime values briefly highlight their table row.
+- Right-click a row for force/set and copy commands. Double-click toggles a
+  Digital signal or focuses the Analog exact-value editor.
+
+Keyboard shortcuts in either table:
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Select previous or next row |
+| PageUp / PageDown | Move by the visible table height |
+| Home / End | Select first or last visible row |
+| Enter / Space | Toggle Digital or edit Analog |
+| Delete | Force Digital OFF or set Analog to zero |
+
+Search text, page size, sort order, selected row, and selected tab are stored as
+optional UI state in project files. Older project files remain compatible.
+
 The Tag Manager is the source of truth. Deleting or changing a tag affects all
 runtime consumers generated from that tag database.
 
