@@ -165,6 +165,24 @@ Keyboard shortcuts in either table:
 Search text, page size, sort order, selected row, and selected tab are stored as
 optional UI state in project files. Older project files remain compatible.
 
+## Industrial Dashboard
+
+The Dashboard provides a fixed-layout engineering overview without creating a
+widget set per tag. Compact cards summarize PLC and communication health,
+project identity, tag-feature counts, simulation, alarms, trends, last read,
+and read-cycle duration.
+
+Dashboard-enabled tags appear in a searchable, sortable native table with
+quality, source, alarm, and trend state. Quick filters select data types, active
+alarms, simulated tags, or PLC-sourced values. Selecting a row updates one
+reusable detail panel; double-clicking opens the corresponding Digital or
+Analog editor with the same tag selected.
+
+The lower panels expose passive communication diagnostics, the existing alarm
+and Trend state, active simulation timers, project status, navigation, Trend
+start/stop, simulation stop, and project save actions. Recent meaningful events
+are kept in a bounded in-memory list. See [Dashboard documentation](docs/DASHBOARD.md).
+
 The Tag Manager is the source of truth. Deleting or changing a tag affects all
 runtime consumers generated from that tag database.
 

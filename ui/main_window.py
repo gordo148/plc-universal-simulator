@@ -51,6 +51,7 @@ from ui.project_config import (
     save_project_as,
 )
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
+from ui.dashboard_tab import cancel_dashboard_callbacks
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
 from ui.tag_manager import (
     create_tag_manager_tab,
@@ -891,6 +892,8 @@ class PLCSimulator:
         self._save_settings()
         self.refresh_recent_projects()
         self._mark_project_saved()
+        try: self._last_project_save_timestamp = os.path.getmtime(self.project_path)
+        except OSError: self._last_project_save_timestamp = None
 
     def _after_project_saved(self):
         # Saved projects belong in the same quick-access list as opened ones.
@@ -899,6 +902,8 @@ class PLCSimulator:
             self._save_settings()
             self.refresh_recent_projects()
         self._mark_project_saved()
+        self._last_project_save_timestamp = time.time()
+        update_dashboard(self, "Project saved")
 
     def refresh_recent_projects(self):
         if not hasattr(self, "recent_project_menu"):
@@ -979,6 +984,7 @@ class PLCSimulator:
         phase("stop_profiles_and_trends", stop_profiles)
         phase("stop_workers", lambda: PLCSimulator._stop_shutdown_workers(self))
         phase("cancel_after_callbacks", self.cancel_pending_tab_refreshes)
+        phase("cancel_dashboard_callbacks", lambda: cancel_dashboard_callbacks(self))
         phase("cancel_remaining_callbacks", self.cancel_pending_jobs)
         for scroll_name in ("digital_scroll", "analog_scroll"):
             scroll = getattr(self, scroll_name, None)
