@@ -9,6 +9,8 @@ import sys
 from tkinter import filedialog, messagebox, ttk
 
 from core.tag_model import Tag
+from ui.header import connection_brand
+from ui.table_utils import clear_entry, debounce
 
 
 LOGGER = logging.getLogger(__name__)
@@ -207,6 +209,31 @@ def create_tag_manager_tab(app):
     )
     app.tag_database_validation_label.pack(fill="x", padx=15, pady=(0, 5))
 
+    search_row = ctk.CTkFrame(frame, fg_color="transparent")
+    search_row.pack(fill="x", padx=8, pady=(2, 4))
+    ctk.CTkLabel(search_row, text="Search:").pack(side="left", padx=(4, 6))
+    app.tag_search_entry = ctk.CTkEntry(
+        search_row, width=320,
+        placeholder_text="Name, address, type or direction",
+    )
+    app.tag_search_entry.pack(side="left", padx=(0, 4))
+    app.tag_search_clear_button = ctk.CTkButton(
+        search_row, text="×", width=32,
+        command=lambda: clear_tag_search(app),
+    )
+    app.tag_search_clear_button.pack(side="left", padx=(0, 10))
+    app.tag_search_count_label = ctk.CTkLabel(search_row, text="0 tags")
+    app.tag_search_count_label.pack(side="left", padx=6)
+    app.tag_search_entry.bind(
+        "<KeyRelease>", lambda event: on_tag_search_key(app, event),
+    )
+    app.tag_search_entry.bind(
+        "<Return>", lambda _event: select_first_filtered_tag(app),
+    )
+    app.app.bind(
+        "<Control-f>", lambda _event: focus_tag_search(app), add="+",
+    )
+
     configure_tag_table_style(frame)
     table_frame = ctk.CTkFrame(
         frame, fg_color="#242424", border_width=1, border_color="#454545",
@@ -271,6 +298,51 @@ def create_tag_manager_tab(app):
 
     refresh_tag_table(app)
     update_tag_address_context(app)
+
+
+def filter_tag_collection(tags, query):
+    """Return a separate filtered view; never mutate the source collection."""
+    query = str(query or "").strip().casefold()
+    if not query:
+        return list(tags)
+    return [
+        tag for tag in tags
+        if query in tag.name.casefold()
+        or query in tag.address.casefold()
+        or query in tag.data_type.casefold()
+        or query in tag.direction.casefold()
+    ]
+
+
+def on_tag_search_key(app, event):
+    if getattr(event, "keysym", "") == "Escape":
+        clear_tag_search(app)
+        return "break"
+    debounce(
+        app, "tag_search", 150,
+        lambda: refresh_tag_table(app, view_only=True),
+    )
+
+
+def clear_tag_search(app):
+    clear_entry(app.tag_search_entry)
+    refresh_tag_table(app, view_only=True)
+    app.tag_search_entry.focus_set()
+
+
+def focus_tag_search(app):
+    app.tag_search_entry.focus_set()
+    app.tag_search_entry.select_range(0, "end")
+    return "break"
+
+
+def select_first_filtered_tag(app):
+    children = app.tag_table.get_children()
+    if children:
+        app.tag_table.selection_set(children[0])
+        app.tag_table.focus(children[0])
+        app.tag_table.see(children[0])
+    return "break"
 
 
 def configure_tag_table_style(widget):
@@ -342,7 +414,7 @@ def configure_tag_table_style(widget):
 
 def update_csv_button_visibility(app):
     """Show only the CSV vendor importer for the selected PLC brand."""
-    brand = app.brand_menu.get()
+    brand = connection_brand(app)
     vendor_buttons = (
         (app.tag_import_tia_csv_button, brand == "Siemens"),
         (app.tag_import_schneider_csv_button, brand == "Schneider"),
@@ -389,12 +461,12 @@ def add_tag(app):
 
     data_type = app.tag_type_menu.get()
     address = resolve_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         name,
         app.tag_address_entry.get(),
     )
     valid, validation_message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         data_type,
         address,
     )
@@ -417,6 +489,7 @@ def add_tag(app):
     )
 
     app.tags.append(tag)
+    mark_project_modified(app)
     refresh_tag_table(app)
     app.tag_address_manual_edit = False
     app.generate_signals()
@@ -517,7 +590,7 @@ def validate_tag_address(brand, data_type, address):
 
 def suggest_tag_address(app):
     address = suggest_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         app.tags,
         app.tag_name_entry.get(),
@@ -528,7 +601,7 @@ def suggest_tag_address(app):
     app.tag_last_suggested_address = address
 
     _, message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         address,
     )
@@ -560,7 +633,7 @@ def _sync_rockwell_tag_address(app):
 
 
 def on_tag_name_edited(app):
-    if app.brand_menu.get() != "Rockwell":
+    if connection_brand(app) != "Rockwell":
         return
     _sync_rockwell_tag_address(app)
     validate_current_tag_address(app)
@@ -586,7 +659,7 @@ def validate_current_tag_address(app):
         return False
 
     valid, message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         address,
     )
@@ -601,7 +674,7 @@ def update_tag_address_context(app):
     if not hasattr(app, "tag_address_entry"):
         return
 
-    if app.brand_menu.get() == "Rockwell":
+    if connection_brand(app) == "Rockwell":
         if app.tag_address_entry.winfo_manager():
             app.tag_address_entry.pack_forget()
         _sync_rockwell_tag_address(app)
@@ -1178,7 +1251,7 @@ def import_tags_csv(app):
         return
 
     try:
-        imported_tags = read_tags_csv(file_path, app.brand_menu.get())
+        imported_tags = read_tags_csv(file_path, connection_brand(app))
     except (OSError, ValueError) as error:
         LOGGER.warning("Universal CSV import failed: %s", error)
         messagebox.showerror(
@@ -1298,7 +1371,7 @@ def apply_imported_tags(
         and hasattr(app, "brand_menu")
         and hasattr(app, "update_brand")
     ):
-        previous_brand = app.brand_menu.get()
+        previous_brand = connection_brand(app)
         brand_changed = previous_brand != target_brand
 
     def set_import_state(active):
@@ -1367,6 +1440,7 @@ def apply_imported_tags(
 
     try:
         app.tags = imported_tags
+        mark_project_modified(app)
         LOGGER.info("CSV import stage: tags applied count=%d", len(imported_tags))
         if brand_changed:
             app.brand_menu.set(target_brand)
@@ -1418,7 +1492,7 @@ def get_csv_template_path(brand):
 
 
 def export_csv_template(app):
-    template_path = get_csv_template_path(app.brand_menu.get())
+    template_path = get_csv_template_path(connection_brand(app))
     destination = filedialog.asksaveasfilename(
         defaultextension=".csv",
         filetypes=[("CSV files", "*.csv")],
@@ -1449,7 +1523,15 @@ def export_csv_template(app):
     LOGGER.info("CSV template exported: %s", destination_path)
 
 
-def refresh_tag_table(app):
+def refresh_tag_table(app, view_only=False):
+    selected = app.tag_table.selection()
+    selected_iid = selected[0] if selected else None
+    query = (
+        app.tag_search_entry.get().strip()
+        if hasattr(app, "tag_search_entry") else ""
+    )
+    if query and selected_iid:
+        app._tag_search_restore_iid = selected_iid
     children = app.tag_table.get_children()
     if children:
         app.tag_table.delete(*children)
@@ -1457,17 +1539,42 @@ def refresh_tag_table(app):
     app.tag_table.tag_configure("even", background="#242424")
     app.tag_table.tag_configure("odd", background="#2b2b2b")
 
-    for index, tag in enumerate(app.tags):
+    filtered = filter_tag_collection(app.tags, query)
+    indices = {id(tag): index for index, tag in enumerate(app.tags)}
+    for visible_index, tag in enumerate(filtered):
+        index = indices[id(tag)]
         create_tag_row(app, tag, index)
 
-    update_master_tag_option_states(app)
-    update_tag_database_validation(app)
+    visible_iids = set(app.tag_table.get_children())
+    candidate = selected_iid if selected_iid in visible_iids else None
+    if not query:
+        restore = getattr(app, "_tag_search_restore_iid", None)
+        if restore in visible_iids:
+            candidate = restore
+            app._tag_search_restore_iid = None
+    if candidate is None and visible_iids:
+        candidate = app.tag_table.get_children()[0]
+    if candidate is not None:
+        app.tag_table.selection_set(candidate)
+        app.tag_table.focus(candidate)
+        app.tag_table.see(candidate)
+
+    if hasattr(app, "tag_search_count_label"):
+        text = (
+            f"Showing {len(filtered)} of {len(app.tags)} tags"
+            if query else f"{len(app.tags)} tags"
+        )
+        app.tag_search_count_label.configure(text=text)
+
+    if not view_only:
+        update_master_tag_option_states(app)
+        update_tag_database_validation(app)
 
 
 def create_tag_row(app, tag, index=None):
     """Insert a lightweight native table row without per-cell widgets."""
     address_valid, _ = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         tag.data_type,
         tag.address,
     )
@@ -1568,6 +1675,7 @@ def set_tag_flag(app, tag, field, value):
 def delete_tag(app, tag):
     if tag in app.tags:
         app.tags.remove(tag)
+        mark_project_modified(app)
 
     refresh_tag_table(app)
     app.generate_signals()
@@ -1575,7 +1683,7 @@ def delete_tag(app, tag):
 
 def is_tag_compatible(app, tag):
     valid, _ = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         tag.data_type,
         tag.address,
     )
@@ -1599,7 +1707,7 @@ def update_tag_database_validation(app):
         app.tag_database_validation_label.configure(
             text=(
                 f"⚠ {len(invalid_tags)} tag(s) incompatível(is) com "
-                f"{app.brand_menu.get()}: {names}. Ignoradas pelos separadores runtime."
+                f"{connection_brand(app)}: {names}. Ignoradas pelos separadores runtime."
             ),
             text_color="red",
         )

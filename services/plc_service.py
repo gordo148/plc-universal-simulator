@@ -3,6 +3,7 @@
 import logging
 import re
 import struct
+import time
 from importlib import import_module
 from typing import Any, Iterable
 
@@ -71,8 +72,33 @@ class PLCService:
         self.runtime_cache = runtime_cache or RuntimeTagCache()
         self.siemens_max_gap = max(0, int(siemens_max_gap))
         self.siemens_max_read_size = max(4, int(siemens_max_read_size))
+        self.diagnostics = {
+            "read_success_count": 0, "read_error_count": 0,
+            "write_success_count": 0, "write_error_count": 0,
+            "reconnect_count": 0, "connect_count": 0,
+            "last_read_timestamp": None, "last_write_timestamp": None,
+            "last_read_duration_ms": 0.0, "last_write_duration_ms": 0.0,
+            "total_read_duration_ms": 0.0, "total_write_duration_ms": 0.0,
+        }
+
+    def diagnostics_snapshot(self):
+        data = dict(self.diagnostics)
+        reads = data["read_success_count"] + data["read_error_count"]
+        writes = data["write_success_count"] + data["write_error_count"]
+        data["average_read_duration_ms"] = data["total_read_duration_ms"] / reads if reads else 0.0
+        data["average_write_duration_ms"] = data["total_write_duration_ms"] / writes if writes else 0.0
+        data["brand"] = self._brand
+        data["connected"] = self.is_connected()
+        return data
 
     def connect(self, brand: str, ip: str, **options) -> bool:
+        if self.diagnostics["connect_count"]:
+            self.diagnostics["reconnect_count"] += 1
+        result = self._connect_impl(brand, ip, **options)
+        self.diagnostics["connect_count"] += 1
+        return result
+
+    def _connect_impl(self, brand: str, ip: str, **options) -> bool:
         self.disconnect()
         LOGGER.info("PLC connection requested: brand=%s", brand)
 
@@ -168,7 +194,17 @@ class PLCService:
             LOGGER.exception("PLC connection-state check failed")
             return False
 
-    def read(
+    def read(self, definitions, brand=None):
+        started = time.perf_counter()
+        try:
+            result = self._read_impl(definitions, brand)
+        except Exception:
+            self._record_io("read", False, started)
+            raise
+        self._record_io("read", bool(result), started)
+        return result
+
+    def _read_impl(
         self,
         definitions: Iterable[TagDefinition],
         brand: str | None = None,
@@ -196,6 +232,12 @@ class PLCService:
         return False
 
     def write_bool(self, tag: TagDefinition, value: bool) -> bool | None:
+        started = time.perf_counter()
+        result = self._write_bool_impl(tag, value)
+        self._record_io("write", result is not None, started)
+        return result
+
+    def _write_bool_impl(self, tag: TagDefinition, value: bool) -> bool | None:
         if not self.is_connected() or self._brand is None:
             return None
 
@@ -227,7 +269,13 @@ class PLCService:
             return bool(result)
         return None
 
-    def write_numeric(
+    def write_numeric(self, target, value):
+        started = time.perf_counter()
+        result = self._write_numeric_impl(target, value)
+        self._record_io("write", result is not None, started)
+        return result
+
+    def _write_numeric_impl(
         self,
         target: TagDefinition | str | int,
         value: int | float,
@@ -285,6 +333,15 @@ class PLCService:
                 RuntimeValueSource.PLC,
             )
         return result
+
+    def _record_io(self, operation, success, started):
+        duration = (time.perf_counter() - started) * 1000
+        prefix = "read" if operation == "read" else "write"
+        self.diagnostics[f"{prefix}_{'success' if success else 'error'}_count"] += 1
+        if success:
+            self.diagnostics[f"last_{prefix}_timestamp"] = time.time()
+        self.diagnostics[f"last_{prefix}_duration_ms"] = duration
+        self.diagnostics[f"total_{prefix}_duration_ms"] += duration
 
     def _numeric_address(self, target: TagDefinition | str | int) -> int:
         if isinstance(target, TagDefinition):

@@ -1,8 +1,13 @@
+import copy
 import logging
 import os
 import platform
 import sys
+import faulthandler
+import queue
+import threading
 import time
+import traceback
 from pathlib import Path
 from tkinter import PhotoImage, TclError, messagebox
 
@@ -21,11 +26,15 @@ from core.version import (
 from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
 
-from ui.header import create_header, SCHNEIDER_MODELS
+from ui.header import (
+    create_header, SCHNEIDER_MODELS, connection_brand, connection_value,
+    set_connection_brand, set_connection_value,
+)
 from ui.digital_tab import (
     cancel_digital_refresh,
     create_digital_tab,
     refresh_digital_tab,
+    update_digital_table_values,
 )
 from ui.analog_tab import (
     begin_analog_refresh,
@@ -34,6 +43,7 @@ from ui.analog_tab import (
     create_analog_row,
     finish_analog_refresh,
     refresh_analog_tab,
+    update_analog_table_values,
 )
 from ui.pid_tab import create_pid_tab
 from ui.pid_logic import start_pid as pid_start
@@ -49,6 +59,7 @@ from ui.project_config import (
     save_project_as,
 )
 from ui.dashboard_tab import create_dashboard_tab, update_dashboard
+from ui.dashboard_tab import cancel_dashboard_callbacks
 from ui.alarm_tab import create_alarm_tab, update_alarm_sources
 from ui.tag_manager import (
     create_tag_manager_tab,
@@ -155,8 +166,12 @@ class PLCSimulator:
         self._rebuild_after_jobs = set()
         self._closing = False
         self.is_closing = False
+        self._shutdown_started = False
+        self._project_dirty = False
         self._pending_jobs = set()
         self._dirty_tabs = set()
+        self._plc_values = {}
+        self._simulated_values = {}
 
         self.cyclic_read_enabled = False
 
@@ -175,8 +190,7 @@ class PLCSimulator:
 
         self.create_header()
         self.create_tabs()
-        self.ip_entry.delete(0, "end")
-        self.ip_entry.insert(0, self.settings.ip_address)
+        set_connection_value(self, "ip", self.settings.ip_address)
         self.brand_menu.set(self.settings.plc_brand)
         self.update_brand(self.settings.plc_brand)
         self.refresh_recent_projects()
@@ -185,14 +199,14 @@ class PLCSimulator:
 
     def schedule_job(self, delay, callback):
         """Schedule and centrally track a callback that is safe during shutdown."""
-        if self.is_closing:
+        if self.is_closing or getattr(self, "_shutdown_started", False):
             return None
         job = None
 
         def guarded_callback():
             if job is not None:
                 self._pending_jobs.discard(job)
-            if self.is_closing:
+            if self.is_closing or getattr(self, "_shutdown_started", False):
                 return
             try:
                 callback()
@@ -250,14 +264,16 @@ class PLCSimulator:
         self.tab_feedbacks = self.tabs.add("Feedbacks")
 
         create_digital_tab(self)
-        self.digital_scroll = SafeScrollableFrame(self.tab_digital)
-        self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.digital_scroll_buttons = self.digital_scroll.install_navigation()
+        if not hasattr(self, "digital_scroll"):
+            self.digital_scroll = SafeScrollableFrame(self.tab_digital)
+            self.digital_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+            self.digital_scroll_buttons = self.digital_scroll.install_navigation()
 
         create_analog_tab(self)
-        self.analog_scroll = SafeScrollableFrame(self.tab_analog)
-        self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.analog_scroll_buttons = self.analog_scroll.install_navigation()
+        if not hasattr(self, "analog_scroll"):
+            self.analog_scroll = SafeScrollableFrame(self.tab_analog)
+            self.analog_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+            self.analog_scroll_buttons = self.analog_scroll.install_navigation()
 
     def _on_tab_changed(self):
         selected_tab = self.tabs.get()
@@ -347,61 +363,57 @@ class PLCSimulator:
         pid_run_loop(self)
 
     def connect(self):
-        ip = self.ip_entry.get().strip()
-        brand = self.brand_menu.get()
+        if getattr(self, "_connection_ui_rebuilding", False):
+            return
+        ip = connection_value(self, "ip").strip()
+        brand = connection_brand(self)
+        options = {}
+        if brand == "Siemens":
+            options = {"rack": connection_value(self, "rack"), "slot": connection_value(self, "slot"), "db_number": connection_value(self, "db_number")}
+        elif brand in ("Schneider", "Modbus TCP"):
+            options = {"port": connection_value(self, "port"), "slave_id": connection_value(self, "slave_id")}
+        elif brand == "Omron":
+            options = {"port": connection_value(self, "omron_port"), "destination_node": connection_value(self, "destination_node"), "source_node": connection_value(self, "source_node")}
+        self._connection_generation = getattr(self, "_connection_generation", 0) + 1
+        generation = self._connection_generation
+        self._connection_results = queue.Queue()
+        self.status_label.configure(text="● A LIGAR...", text_color="orange")
+        def worker():
+            try:
+                result = self.plc_service.connect(brand, "" if brand == "Simulator" else ip, **options)
+                self._connection_results.put((generation, result, None))
+            except Exception as error:
+                self._connection_results.put((generation, False, error))
+        self.connection_thread = threading.Thread(target=worker, name="plc-connect", daemon=True)
+        self.connection_thread.start()
+        self.schedule_job(25, lambda: self._poll_connection_result(generation, brand))
 
+    def _poll_connection_result(self, generation, brand):
+        if getattr(self, "_shutdown_started", False) or generation != getattr(self, "_connection_generation", 0):
+            return
         try:
-            if brand == "Simulator":
-                result = self.plc_service.connect(brand, "")
-            elif brand == "Siemens":
-                result = self.plc_service.connect(
-                    brand,
-                    ip,
-                    rack=self.rack_entry.get(),
-                    slot=self.slot_entry.get(),
-                    db_number=self.db_entry.get(),
-                )
-            elif brand in ("Schneider", "Modbus TCP"):
-                result = self.plc_service.connect(
-                    brand,
-                    ip,
-                    port=self.port_entry.get(),
-                    slave_id=self.slave_entry.get(),
-                )
-            elif brand == "Omron":
-                result = self.plc_service.connect(
-                    brand,
-                    ip,
-                    port=self.port_entry.get(),
-                    destination_node=self.destination_node_entry.get(),
-                    source_node=self.source_node_entry.get(),
-                )
-            else:
-                result = self.plc_service.connect(brand, ip)
-
-            if result:
-                status = "● SIMULATOR" if brand == "Simulator" else "● LIGADO"
-                self.status_label.configure(text=status, text_color="lime")
-                self.cyclic_read_enabled = True
-                self.start_cyclic_read()
-                event = (
-                    "Simulador interno ligado"
-                    if brand == "Simulator"
-                    else "PLC ligado"
-                )
-                update_dashboard(self, event)
-            else:
-                self.status_label.configure(text="● ERRO LIGAÇÃO", text_color="orange")
-
-        except Exception:
-            LOGGER.exception("PLC connection failed for brand %s", brand)
+            completed_generation, result, error = self._connection_results.get_nowait()
+        except queue.Empty:
+            self.schedule_job(25, lambda: self._poll_connection_result(generation, brand))
+            return
+        if completed_generation != generation:
+            return
+        if error is not None:
+            LOGGER.error("PLC connection failed for brand %s", brand, exc_info=(type(error), error, error.__traceback__))
             self.status_label.configure(text="● ERRO", text_color="orange")
-            messagebox.showerror(
-                "Connection error",
-                "Unable to connect to PLC. Check IP address and network.",
-            )
+            messagebox.showerror("Connection error", "Unable to connect to PLC. Check IP address and network.")
+            return
+        if not result:
+            self.status_label.configure(text="● ERRO LIGAÇÃO", text_color="orange")
+            return
+        status = "● SIMULATOR" if brand == "Simulator" else "● LIGADO"
+        self.status_label.configure(text=status, text_color="lime")
+        self.cyclic_read_enabled = True
+        self.start_cyclic_read()
+        update_dashboard(self, "Simulador interno ligado" if brand == "Simulator" else "PLC ligado")
 
     def disconnect(self):
+        self._connection_generation = getattr(self, "_connection_generation", 0) + 1
         self.cyclic_read_enabled = False
 
         if hasattr(self, "trend_running"):
@@ -427,20 +439,26 @@ class PLCSimulator:
         return self.plc_service.is_connected()
 
     def update_brand(self, value):
-        self.disconnect()
-
-        if value == "Siemens":
-            self.create_siemens_options()
-        elif value == "Schneider":
-            self.create_schneider_options()
-        elif value == "Modbus TCP":
-            self.create_modbus_options()
-        elif value == "Rockwell":
-            self.create_rockwell_options()
-        elif value == "Omron":
-            self.create_omron_options()
-        else:
-            self.create_simulator_options()
+        if getattr(self, "_connection_ui_rebuilding", False):
+            return
+        set_connection_brand(self, value)
+        self._connection_ui_rebuilding = True
+        try:
+            self.disconnect()
+            if value == "Siemens":
+                self.create_siemens_options()
+            elif value == "Schneider":
+                self.create_schneider_options()
+            elif value == "Modbus TCP":
+                self.create_modbus_options()
+            elif value == "Rockwell":
+                self.create_rockwell_options()
+            elif value == "Omron":
+                self.create_omron_options()
+            else:
+                self.create_simulator_options()
+        finally:
+            self._connection_ui_rebuilding = False
 
         if hasattr(self, "tag_import_tia_csv_button"):
             update_csv_button_visibility(self)
@@ -449,6 +467,7 @@ class PLCSimulator:
             self.generate_signals()
 
     def update_schneider_model(self, model):
+        set_connection_value(self, "schneider_model", model)
         defaults = SCHNEIDER_MODELS[model]
 
         self.coil_start_entry.delete(0, "end")
@@ -483,7 +502,7 @@ class PLCSimulator:
             self.tag_runtime.invalidate(tag.name)
 
         signature = (
-            self.brand_menu.get(),
+            connection_brand(self),
             tuple((tag.name, tag.data_type, tag.direction, tag.address, tag.enabled_sim)
                   for tag in self.tags),
         )
@@ -596,7 +615,9 @@ class PLCSimulator:
 
     def update_digital_name(self, index):
         item = self.digital_controls[index]
-        name = item["name_entry"].get()
+        tag = self.digital_tags[index]
+        name_widget = item.get("name_entry")
+        name = name_widget.get() if hasattr(name_widget, "get") else tag.name
         state = self.digital_states.get(index, False)
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
 
@@ -746,7 +767,7 @@ class PLCSimulator:
         return real_value
 
     def start_cyclic_read(self):
-        if self.is_closing:
+        if self.is_closing or getattr(self, "_shutdown_started", False):
             return
         if not self.cyclic_read_enabled:
             return
@@ -771,6 +792,8 @@ class PLCSimulator:
         self.schedule_job(500, self.start_cyclic_read)
 
     def update_runtime_widgets(self):
+        update_digital_table_values(self)
+        update_analog_table_values(self)
         for index, tag in enumerate(self.digital_tags):
             value = self.tag_runtime.get_value(tag.name)
             if value is not None:
@@ -788,7 +811,14 @@ class PLCSimulator:
         self.digital_states[index] = state
         if source is not None:
             self.tag_runtime.update(tag.name, state, source)
-        name = item["name_entry"].get()
+        runtime = self.tag_runtime.get(tag.name)
+        actual_source = source or (runtime.source if runtime else None)
+        if actual_source == RuntimeValueSource.SIMULATION:
+            getattr(self, "_simulated_values", {}).update({tag.name: bool(state)})
+        else:
+            getattr(self, "_plc_values", {}).update({tag.name: bool(state)})
+        name_widget = item.get("name_entry")
+        name = name_widget.get() if hasattr(name_widget, "get") else tag.name
 
         item["button"].configure(text=f"{name} {'ON' if state else 'OFF'}")
         item["led"].configure(text="●", text_color="lime" if state else "gray")
@@ -802,6 +832,12 @@ class PLCSimulator:
 
         if source is not None:
             self.tag_runtime.update(tag.name, value, source)
+        runtime = self.tag_runtime.get(tag.name)
+        actual_source = source or (runtime.source if runtime else None)
+        if actual_source == RuntimeValueSource.SIMULATION:
+            getattr(self, "_simulated_values", {}).update({tag.name: value})
+        else:
+            getattr(self, "_plc_values", {}).update({tag.name: value})
         if item.get("interactive", True):
             item["slider"].set(value)
         item["value_label"].configure(text=f"{value} RAW")
@@ -866,6 +902,8 @@ class PLCSimulator:
         self._save_settings()
         self.refresh_recent_projects()
         self._mark_project_saved()
+        try: self._last_project_save_timestamp = os.path.getmtime(self.project_path)
+        except OSError: self._last_project_save_timestamp = None
 
     def _after_project_saved(self):
         # Saved projects belong in the same quick-access list as opened ones.
@@ -874,6 +912,8 @@ class PLCSimulator:
             self._save_settings()
             self.refresh_recent_projects()
         self._mark_project_saved()
+        self._last_project_save_timestamp = time.time()
+        update_dashboard(self, "Project saved")
 
     def refresh_recent_projects(self):
         if not hasattr(self, "recent_project_menu"):
@@ -884,14 +924,35 @@ class PLCSimulator:
 
     def _mark_project_saved(self):
         self._saved_project_snapshot = build_project_data(self)
+        self._project_dirty = False
+
+    def mark_project_dirty(self):
+        self._project_dirty = True
+
+    def mark_project_modified(self):
+        self.mark_project_dirty()
 
     def has_unsaved_changes(self):
+        if getattr(self, "_project_dirty", False):
+            return True
         saved = getattr(self, "_saved_project_snapshot", None)
-        return saved is not None and build_project_data(self) != saved
+        return (
+            saved is not None
+            and PLCSimulator._dirty_comparison_snapshot(build_project_data(self))
+            != PLCSimulator._dirty_comparison_snapshot(saved)
+        )
+
+    @staticmethod
+    def _dirty_comparison_snapshot(project):
+        """Exclude navigation-only UI state from the unsaved-project prompt."""
+        snapshot = copy.deepcopy(project)
+        runtime = snapshot.get("runtime_settings", {})
+        runtime.pop("ui_state", None)
+        return snapshot
 
     def _save_settings(self):
-        self.settings.plc_brand = self.brand_menu.get()
-        self.settings.ip_address = self.ip_entry.get()
+        self.settings.plc_brand = connection_brand(self)
+        self.settings.ip_address = connection_value(self, "ip")
         size = self.app.geometry().split("+", 1)[0]
         if "x" in size:
             self.settings.window_size = size
@@ -902,30 +963,246 @@ class PLCSimulator:
             LOGGER.warning("Could not save application settings: %s", error)
 
     def on_close(self):
-        if self.has_unsaved_changes() and not messagebox.askyesno(
-            "Alterações não guardadas",
-            "O projeto tem alterações não guardadas. Fechar sem guardar?",
-        ):
+        self._shutdown_marker("SHUTDOWN ENTER", thread=threading.current_thread().name)
+        if getattr(self, "_shutdown_started", False):
+            self._shutdown_marker("SHUTDOWN REENTRANT IGNORED", thread=threading.current_thread().name)
             return
-        self.is_closing = True
-        self._closing = True
-        self.cyclic_read_enabled = False
-        self.pid_running = False
-        if hasattr(self, "trend_running"):
-            self.trend_running = False
-        for index in tuple(self.analog_profile_running):
-            self.analog_profile_running[index] = False
-        self.cancel_pending_tab_refreshes()
-        self.cancel_pending_jobs()
+        self._shutdown_started = True
+        self._shutdown_phase = "SHUTDOWN GUARD SET"
+        self._shutdown_marker("SHUTDOWN GUARD SET")
+        self._shutdown_complete_event = threading.Event()
+        threading.Thread(
+            target=self._shutdown_watchdog,
+            name="shutdown-watchdog",
+            daemon=True,
+        ).start()
+        total_started = time.perf_counter()
+        timings = {}
+
+        def phase(name, callback):
+            started = time.perf_counter()
+            result = callback()
+            timings[name] = (time.perf_counter() - started) * 1000
+            return result
+
+        self._shutdown_phase = "UNSAVED CHECK"
+        self._shutdown_marker("UNSAVED CHECK START")
+        dirty = phase("tag_serialization", self.has_unsaved_changes)
+        self._shutdown_marker("UNSAVED CHECK END", dirty=dirty)
+        if dirty:
+            self._shutdown_phase = "CONFIRMATION"
+            self._shutdown_marker("CONFIRMATION START")
+            self.app.lift()
+            self.app.focus_force()
+            self.app.attributes("-topmost", True)
+            self.app.bell()
+            discard = phase(
+                "unsaved_confirmation",
+                lambda: messagebox.askyesno(
+                    "Alterações não guardadas",
+                    "O projeto tem alterações não guardadas. Fechar sem guardar?",
+                    parent=self.app,
+                ),
+            )
+            self.app.attributes("-topmost", False)
+            self._shutdown_marker("CONFIRMATION END", result=discard)
+            if not discard:
+                self._shutdown_started = False
+                self._shutdown_complete_event.set()
+                self._shutdown_marker("SHUTDOWN RETURN", result="cancelled")
+                return
+        else:
+            timings["unsaved_confirmation"] = 0.0
+            self._shutdown_marker("CONFIRMATION START", skipped=True)
+            self._shutdown_marker("CONFIRMATION END", skipped=True)
+        timings["project_save"] = 0.0  # Closing never auto-saves the project.
+
+        def set_closing():
+            self.is_closing = True
+            self._closing = True
+        phase("closing_flag", set_closing)
+        if len(getattr(self, "tags", [])) >= 1000:
+            status = getattr(self, "status_label", None)
+            if status is not None:
+                status.configure(text="Closing application...", text_color="orange")
+                try: self.app.update_idletasks()
+                except TclError: pass
+
+        phase("stop_polling", lambda: setattr(self, "cyclic_read_enabled", False))
+        self._shutdown_phase = "TREND STOP"
+        self._shutdown_marker("TREND STOP START")
+        def stop_trends():
+            if hasattr(self, "trend_running"):
+                self.trend_running = False
+            if getattr(self, "_trend_initialized", False):
+                from ui.trend_tab import cancel_trend_callbacks
+                cancel_trend_callbacks(self)
+        phase("stop_trends", stop_trends)
+        self._shutdown_marker("TREND STOP END")
+        self._shutdown_phase = "PID STOP"
+        self._shutdown_marker("PID STOP START")
+        phase("stop_pid", lambda: setattr(self, "pid_running", False))
+        self._shutdown_marker("PID STOP END")
+        def stop_profiles():
+            for index in tuple(self.analog_profile_running):
+                self.analog_profile_running[index] = False
+        phase("stop_profiles", stop_profiles)
+        self._shutdown_phase = "WORKER STOP"
+        self._shutdown_marker("WORKER STOP START")
+        phase("stop_workers", lambda: PLCSimulator._stop_shutdown_workers(self))
+        self._shutdown_marker("WORKER STOP END")
+        self._shutdown_phase = "CALLBACK CANCELLATION"
+        self._shutdown_marker("CALLBACK CANCELLATION START", pending=len(self._pending_jobs))
+        phase("cancel_after_callbacks", self.cancel_pending_tab_refreshes)
+        self._shutdown_phase = "DASHBOARD STOP"
+        self._shutdown_marker("DASHBOARD STOP START")
+        phase("cancel_dashboard_callbacks", lambda: cancel_dashboard_callbacks(self))
+        self._shutdown_marker("DASHBOARD STOP END")
+        phase("cancel_remaining_callbacks", self.cancel_pending_jobs)
+        self._shutdown_marker("CALLBACK CANCELLATION END", pending=len(self._pending_jobs))
         for scroll_name in ("digital_scroll", "analog_scroll"):
             scroll = getattr(self, scroll_name, None)
-            if scroll is not None:
-                scroll.disconnect_scroll_callbacks()
+            disconnect_scroll_callbacks = getattr(
+                scroll, "disconnect_scroll_callbacks", None
+            )
+            if disconnect_scroll_callbacks is not None:
+                disconnect_scroll_callbacks()
         self.is_rebuilding = False
-        self.plc_service.disconnect()
-        self._save_settings()
-        LOGGER.info("Application window closed")
-        self.app.destroy()
+        self._shutdown_phase = "PLC DISCONNECT"
+        self._shutdown_marker("PLC DISCONNECT START")
+        phase("plc_disconnect", self.plc_service.disconnect)
+        self._shutdown_marker("PLC DISCONNECT END")
+        self._shutdown_phase = "SETTINGS SAVE"
+        self._shutdown_marker("SETTINGS SAVE START")
+        phase("settings_and_recent_save", self._save_settings)
+        self._shutdown_marker("SETTINGS SAVE END")
+        self._shutdown_phase = "MATPLOTLIB CLEANUP"
+        self._shutdown_marker("MATPLOTLIB CLEANUP START")
+        phase("trend_cleanup", lambda: PLCSimulator._cleanup_trends_for_shutdown(self))
+        self._shutdown_marker("MATPLOTLIB CLEANUP END")
+        self._log_shutdown_ui_diagnostics()
+        self._log_shutdown_threads("before root.destroy")
+        self._shutdown_phase = "ROOT DESTROY"
+        self._shutdown_marker("ROOT DESTROY START")
+        phase("root_destroy", self.app.destroy)
+        self._shutdown_marker("ROOT DESTROY END")
+        self._log_shutdown_threads("after root.destroy")
+        def flush_logs():
+            for handler in logging.getLogger().handlers:
+                try: handler.flush()
+                except Exception: pass
+        phase("logger_flush", flush_logs)
+        timings["total"] = (time.perf_counter() - total_started) * 1000
+        self._shutdown_timings = dict(timings)
+        LOGGER.info(
+            "Shutdown profiling: %s",
+            " ".join(f"{name}={value:.1f}ms" for name, value in timings.items()),
+        )
+        self._shutdown_phase = "SHUTDOWN RETURN"
+        self._shutdown_marker("SHUTDOWN RETURN")
+        self._shutdown_complete_event.set()
+
+    def _shutdown_marker(self, marker, **details):
+        timestamp = time.monotonic()
+        suffix = " ".join(f"{key}={value}" for key, value in details.items())
+        LOGGER.warning("%.6f %s%s", timestamp, marker, f" {suffix}" if suffix else "")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+    def _shutdown_watchdog(self):
+        if self._shutdown_complete_event.wait(5.0):
+            return
+        self._shutdown_marker(
+            "SHUTDOWN WATCHDOG FIRED",
+            phase=getattr(self, "_shutdown_phase", "unknown"),
+            pending=len(getattr(self, "_pending_jobs", ())),
+        )
+        self._log_shutdown_threads("watchdog")
+        faulthandler.dump_traceback(all_threads=True)
+        self._shutdown_marker(
+            "SHUTDOWN WATCHDOG STATE",
+            confirmation_active=getattr(self, "_shutdown_phase", "") == "CONFIRMATION",
+            root_destroy_started=getattr(self, "_shutdown_phase", "") == "ROOT DESTROY",
+        )
+
+    def _log_shutdown_threads(self, location):
+        current_frames = sys._current_frames()
+        for thread in threading.enumerate():
+            frame = current_frames.get(thread.ident)
+            if frame is None:
+                current_frame = "<no Python frame>"
+                stack = current_frame
+            else:
+                current_frame = (
+                    f"{frame.f_code.co_filename}:{frame.f_lineno} "
+                    f"in {frame.f_code.co_name}"
+                )
+                stack = "".join(traceback.format_stack(frame)).rstrip()
+            self._shutdown_marker(
+                "SHUTDOWN THREAD",
+                location=location,
+                name=thread.name,
+                daemon=thread.daemon,
+                alive=thread.is_alive(),
+                current_frame=current_frame,
+            )
+            LOGGER.warning("SHUTDOWN THREAD STACK name=%s\n%s", thread.name, stack)
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+    def _log_shutdown_ui_diagnostics(self):
+        table = getattr(self, "trend_table", None)
+        try:
+            rows = len(table.get_children()) if table is not None else 0
+        except TclError:
+            rows = -1
+        trend_root = getattr(self, "tab_trends", None)
+        def count_ctk(widget):
+            if widget is None:
+                return 0
+            children = widget.winfo_children()
+            return sum(
+                int(type(child).__module__.startswith("customtkinter")) + count_ctk(child)
+                for child in children
+            )
+        try:
+            trend_ctk_widgets = count_ctk(trend_root)
+        except TclError:
+            trend_ctk_widgets = -1
+        self._shutdown_marker(
+            "SHUTDOWN UI DIAGNOSTICS",
+            trend_rows=rows,
+            trend_tag_vars=len(getattr(self, "trend_tag_vars", {})),
+            trend_ctk_widgets=trend_ctk_widgets,
+            trend_variable_traces=0,
+            trend_callbacks=len(getattr(self, "_trend_after_jobs", ())),
+            pending_callbacks=len(getattr(self, "_pending_jobs", ())),
+            matplotlib_figures=int(getattr(self, "trend_fig", None) is not None),
+            matplotlib_canvases=int(getattr(self, "trend_canvas", None) is not None),
+        )
+
+    def _stop_shutdown_workers(self):
+        """Signal optional UI workers, then use one short bounded join each."""
+        workers = []
+        for name in ("worker_thread", "polling_thread", "import_thread", "connection_thread"):
+            worker = getattr(self, name, None)
+            if worker is not None and worker not in workers:
+                workers.append(worker)
+        for event_name in ("worker_stop_event", "polling_stop_event", "import_stop_event"):
+            event = getattr(self, event_name, None)
+            if event is not None and hasattr(event, "set"): event.set()
+        deadline = time.perf_counter() + 1.0
+        for worker in workers:
+            remaining = max(0.0, deadline - time.perf_counter())
+            if hasattr(worker, "join"): worker.join(timeout=min(0.25, remaining))
+            if hasattr(worker, "is_alive") and worker.is_alive():
+                LOGGER.warning("Shutdown worker did not terminate: %s", getattr(worker, "name", worker))
+
+    def _cleanup_trends_for_shutdown(self):
+        figure = getattr(self, "trend_fig", None)
+        if figure is not None:
+            try: figure.clear()
+            except Exception: LOGGER.debug("Trend figure cleanup failed", exc_info=True)
 
     def show_about(self):
         messagebox.showinfo("About", get_about_text())

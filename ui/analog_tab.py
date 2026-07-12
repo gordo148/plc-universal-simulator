@@ -1,28 +1,35 @@
 import logging
+import time
 
 import customtkinter as ctk
+from tkinter import Menu, ttk
 from ui.analog_profiles import start_profile, stop_profile
 from ui.scrollable_frame import widget_exists
+from core.tag_runtime import RuntimeValueSource
+from ui.table_utils import (
+    PAGE_SIZES, ToolTip, clear_entry, copy_text, debounce, filter_tags,
+    move_selection, page_tags as paginate_tags, sort_tags,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 ANALOG_BATCH_SIZE = 10
-PAGE_SIZES = (25, 50, 100)
-
-
 def create_analog_tab_structure(app):
     """Create persistent Analog controls exactly once."""
     if getattr(app, "_analog_structure_initialized", False):
         return
+    started = time.perf_counter()
     controls = ctk.CTkFrame(app.tab_analog)
     controls.pack(fill="x", padx=10, pady=(10, 0))
     ctk.CTkLabel(controls, text="Search").pack(side="left", padx=5)
     app.analog_search_entry = ctk.CTkEntry(controls, width=260)
     app.analog_search_entry.pack(side="left", padx=5)
-    app.analog_search_entry.bind("<KeyRelease>", lambda _event: refresh_analog_tab(app, reset_page=True))
+    app.analog_search_entry.bind("<KeyRelease>", lambda event: _analog_search_key(app, event))
+    app.analog_search_clear = ctk.CTkButton(controls, text="×", width=30, command=lambda: clear_analog_search(app))
+    app.analog_search_clear.pack(side="left", padx=(0, 8))
     ctk.CTkLabel(controls, text="Tags per page").pack(side="left", padx=5)
     app.analog_page_size_menu = ctk.CTkOptionMenu(
-        controls, values=[str(size) for size in PAGE_SIZES], width=75,
+        controls, values=list(PAGE_SIZES), width=75,
         command=lambda _value: refresh_analog_tab(app),
     )
     app.analog_page_size_menu.set("50")
@@ -41,10 +48,146 @@ def create_analog_tab_structure(app):
     app.analog_row_pool = []
     app._analog_after_jobs = set()
     app._analog_rebuilding = False
+    app._analog_sort_column = "name"
+    app._analog_sort_descending = False
+    app._analog_last_values = {}
+    app._analog_highlight_jobs = {}
     app._analog_structure_initialized = True
+    _create_analog_master_detail(app)
+    LOGGER.info(
+        "Analog tab structure created: widgets_created=36 callbacks_registered=4 structure_time_ms=%.3f",
+        (time.perf_counter() - started) * 1000,
+    )
 
 
 create_analog_tab = create_analog_tab_structure
+
+
+def _create_analog_master_detail(app):
+    body = ctk.CTkFrame(app.tab_analog)
+    body.pack(fill="both", expand=True, padx=10, pady=10)
+    table_frame = ctk.CTkFrame(body)
+    table_frame.pack(fill="both", expand=True)
+    columns = ("address", "name", "type", "value", "profile", "difference")
+    table = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+    for column, title, width in (
+        ("address", "Address", 120), ("name", "Name", 260),
+        ("type", "Type", 80), ("value", "Current value", 120),
+        ("profile", "Setpoint / Profile", 160),
+        ("difference", "PLC / Sim", 120),
+    ):
+        table.heading(column, text=title, command=lambda col=column: sort_analog_table(app, col))
+        table.column(column, width=width, anchor="center" if column != "name" else "w")
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+    table.configure(yscrollcommand=scrollbar.set)
+    table.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    editor_host = ctk.CTkFrame(body)
+    editor_host.pack(fill="x", pady=(8, 0))
+    app.analog_scroll = editor_host
+    editor_row = create_analog_row_widgets(app)
+    editor_row["frame"].pack(fill="x")
+    table.bind("<<TreeviewSelect>>", lambda _event: _bind_selected_analog(app))
+    table.bind("<Double-1>", lambda _event: _focus_analog_value(app))
+    table.bind("<Button-3>", lambda event: show_analog_context_menu(app, event))
+    table.bind("<Key>", lambda event: handle_analog_key(app, event))
+    app.analog_table = table
+    app.analog_table_scrollbar = scrollbar
+    app.analog_editor = editor_row
+    app.analog_row_pool = [editor_row]
+    app._analog_table_tags = []
+    app._analog_selected_tag_name = None
+    for widget, text in ((editor_row["slider"], "Set the selected analog simulation value."), (editor_row["numeric_entry"], "Enter an exact numeric value."), (editor_row["profile_mode"], "Select Manual, Ramp, Random, or Step simulation mode."), (editor_row["step_entry"], "Amount added or removed on each profile cycle."), (editor_row["interval_entry"], "Time between profile updates in milliseconds."), (editor_row["live"], "Latest runtime value.")):
+        ToolTip(widget, text)
+
+
+def _analog_search_key(app, event):
+    if getattr(event, "keysym", "") == "Escape":
+        clear_analog_search(app); return
+    debounce(app, "analog_search", 150, lambda: refresh_analog_tab(app, reset_page=True))
+
+
+def clear_analog_search(app):
+    clear_entry(app.analog_search_entry)
+    refresh_analog_tab(app, reset_page=True)
+
+
+def sort_analog_table(app, column):
+    if app._analog_sort_column == column:
+        app._analog_sort_descending = not app._analog_sort_descending
+    else:
+        app._analog_sort_column, app._analog_sort_descending = column, False
+    app._analog_preserve_selection = getattr(app, "_analog_selected_tag_name", None)
+    refresh_analog_tab(app, reset_page=True)
+
+
+def _selected_analog_tag(app):
+    selection = app.analog_table.selection()
+    if not selection: return None
+    index = app.analog_table.index(selection[0])
+    return app._analog_table_tags[index] if index < len(app._analog_table_tags) else None
+
+
+def _focus_analog_value(app):
+    if app.analog_tags:
+        app.analog_editor["numeric_entry"].focus_set()
+        app.analog_editor["numeric_entry"].select_range(0, "end")
+
+
+def _write_analog_entry(app):
+    if not app.analog_tags: return
+    try: value = float(app.analog_editor["numeric_entry"].get())
+    except ValueError: return
+    app.write_analog_by_index(0, value)
+
+
+def handle_analog_key(app, event):
+    key = event.keysym
+    if key in ("Up", "Down", "Prior", "Next", "Home", "End"):
+        move_selection(app.analog_table, key); _bind_selected_analog(app); return "break"
+    if key in ("space", "Return"):
+        _focus_analog_value(app); return "break"
+    if key == "Delete" and app.analog_tags:
+        app.write_analog_by_index(0, 0); return "break"
+
+
+def show_analog_context_menu(app, event):
+    row = app.analog_table.identify_row(event.y)
+    if row: app.analog_table.selection_set(row); _bind_selected_analog(app)
+    tag = _selected_analog_tag(app)
+    if tag is None: return
+    menu = Menu(app.analog_table, tearoff=False)
+    menu.add_command(label="Set Value", command=lambda: _focus_analog_value(app))
+    menu.add_separator()
+    menu.add_command(label="Copy Address", command=lambda: copy_text(app.analog_table, tag.address))
+    menu.add_command(label="Copy Name", command=lambda: copy_text(app.analog_table, tag.name))
+    menu.add_command(label="Copy Full Tag", command=lambda: copy_text(app.analog_table, f"{tag.name}\t{tag.address}\t{tag.data_type}"))
+    menu.tk_popup(event.x_root, event.y_root)
+
+
+def _bind_selected_analog(app):
+    selection = app.analog_table.selection()
+    if not selection:
+        return
+    position = app.analog_table.index(selection[0])
+    if position >= len(app._analog_table_tags):
+        return
+    tag = app._analog_table_tags[position]
+    selection_changed = getattr(app, "_analog_selected_tag_name", None) != tag.name or not app.analog_tags
+    app._analog_selected_tag_name = tag.name
+    if selection_changed:
+        app.analog_controls[:] = []
+        app.analog_tags[:] = []
+        app.analog_profile_directions.clear()
+        bind_analog_row(app, app.analog_editor, 0, tag)
+        app.analog_controls.append(app.analog_editor)
+        app.analog_tags.append(tag)
+    else:
+        value = app.tag_runtime.get_value(tag.name, 0)
+        app.analog_editor["value_label"].configure(text=f"{value} RAW")
+        app.analog_editor["live"].configure(text=str(value))
+        app.analog_editor["plc_value"].configure(text=f"PLC: {getattr(app, '_plc_values', {}).get(tag.name, '—')}")
+        app.analog_editor["simulated_value"].configure(text=f"Sim: {getattr(app, '_simulated_values', {}).get(tag.name, '—')}")
 
 
 def cancel_analog_refresh(app):
@@ -66,23 +209,33 @@ def change_analog_page(app, offset):
 
 
 def refresh_analog_visible_rows(app, reset_page=False):
+    refresh_started = time.perf_counter()
     from ui.tag_manager import get_input_analog_tags
 
     cancel_analog_refresh(app)
     if reset_page:
         app.analog_page = 0
     query = app.analog_search_entry.get().strip().casefold()
-    tags = [
-        tag for tag in get_input_analog_tags(app)
-        if not query or query in tag.name.casefold() or query in tag.address.casefold()
-    ]
+    tags = filter_tags(get_input_analog_tags(app), query)
+    runtime = getattr(app, "tag_runtime", None)
+    values = {tag.name: runtime.get_value(tag.name) if runtime else None for tag in tags}
+    if getattr(app, "_analog_sort_column", "name") == "difference":
+        values = {tag.name: getattr(app, "_plc_values", {}).get(tag.name) != getattr(app, "_simulated_values", {}).get(tag.name) for tag in tags}
+    tags = sort_tags(tags, getattr(app, "_analog_sort_column", "name"), getattr(app, "_analog_sort_descending", False), getattr(app, "_analog_profile_cache", {}), values)
+    preserve = getattr(app, "_analog_preserve_selection", None)
+    if preserve:
+        names = [tag.name for tag in tags]
+        if preserve in names and app.analog_page_size_menu.get() != "All":
+            app.analog_page = names.index(preserve) // int(app.analog_page_size_menu.get())
+        app._analog_preserve_selection = None
     page_size_widget = getattr(app, "analog_page_size_menu", None)
-    page_size = int(page_size_widget.get()) if page_size_widget is not None else 50
-    page_count = max(1, (len(tags) + page_size - 1) // page_size)
-    app.analog_page = min(getattr(app, "analog_page", 0), page_count - 1)
-    start = app.analog_page * page_size
-    page_tags = tags[start:start + page_size]
+    size = page_size_widget.get() if page_size_widget is not None else "50"
+    app.analog_page, page_count, start, page_tags = paginate_tags(tags, app.analog_page, size)
     app._analog_rebuilding = True
+    if hasattr(app, "analog_table"):
+        begin_analog_refresh(app, page_tags)
+        _refresh_analog_table(app, tags, page_count, start, page_tags, refresh_started)
+        return
     LOGGER.info("Analog lazy refresh start total=%d page=%d", len(tags), app.analog_page + 1)
     begin_analog_refresh(app, page_tags)
     app.analog_loading_label.configure(text=f"Generating signals: 0 / {len(page_tags)}")
@@ -168,6 +321,78 @@ def refresh_analog_visible_rows(app, reset_page=False):
 refresh_analog_tab = refresh_analog_visible_rows
 
 
+def _refresh_analog_table(app, tags, page_count, start, visible, refresh_started):
+    selected = getattr(app, "_analog_selected_tag_name", None)
+    table = app.analog_table
+    table.delete(*table.get_children())
+    app._analog_table_tags = list(visible)
+    selected_item = None
+    for tag in visible:
+        value = app.tag_runtime.get_value(tag.name, 0)
+        settings = getattr(app, "_analog_profile_cache", {}).get(tag.name, {})
+        plc = getattr(app, "_plc_values", {}).get(tag.name)
+        simulated = getattr(app, "_simulated_values", {}).get(tag.name)
+        different = plc is not None and simulated is not None and plc != simulated
+        item = table.insert("", "end", values=(
+            tag.address, tag.name, tag.data_type, value,
+            settings.get("mode", "Manual") if tag.enabled_sim else "PLC read-only",
+            "⚠ differs" if different else "✓ identical",
+        ))
+        if tag.name == selected:
+            selected_item = item
+    app._analog_rebuilding = False
+    app._dirty_tabs.discard("Entradas Analógicas")
+    app.analog_loading_label.configure(text=f"Page {app.analog_page + 1} of {page_count} · {start + 1 if visible else 0}-{start + len(visible)} of {len(tags)}")
+    app.analog_previous_button.configure(state="normal" if app.analog_page else "disabled")
+    app.analog_next_button.configure(state="normal" if app.analog_page + 1 < page_count else "disabled")
+    if selected_item is None and table.get_children():
+        selected_item = table.get_children()[0]
+    if selected_item is not None:
+        table.selection_set(selected_item)
+        _bind_selected_analog(app)
+    titles = {"address":"Address", "name":"Name", "type":"Type", "value":"Current value", "profile":"Profile", "difference":"PLC / Sim"}
+    if hasattr(table, "heading"):
+        for column, title in titles.items():
+            marker = " ▼" if getattr(app, "_analog_sort_descending", False) else " ▲"
+            table.heading(column, text=title + (marker if column == getattr(app, "_analog_sort_column", "name") else ""), command=lambda col=column: sort_analog_table(app, col))
+    LOGGER.info(
+        "Analog tab generation: tags_total=%d visible_rows=%d widgets_created=0 callbacks_registered=0 row_creation_time_ms=0 layout_time_ms=%.3f total_time_ms=%.3f",
+        len(tags), len(visible), 0.0, (time.perf_counter() - refresh_started) * 1000,
+    )
+
+
+def update_analog_table_values(app):
+    table = getattr(app, "analog_table", None)
+    if table is None or not widget_exists(table):
+        return
+    for item, tag in zip(table.get_children(), app._analog_table_tags):
+        values = list(table.item(item, "values"))
+        runtime_item = app.tag_runtime.get(tag.name)
+        if runtime_item and runtime_item.valid and runtime_item.source == RuntimeValueSource.PLC:
+            app._plc_values[tag.name] = runtime_item.value
+        current = app.tag_runtime.get_value(tag.name, 0)
+        previous = app._analog_last_values.get(tag.name)
+        values[3] = current
+        plc = getattr(app, "_plc_values", {}).get(tag.name)
+        simulated = getattr(app, "_simulated_values", {}).get(tag.name)
+        values[5] = "⚠ differs" if plc is not None and simulated is not None and plc != simulated else "✓ identical"
+        table.item(item, values=values)
+        if previous is not None and previous != current and hasattr(table, "tag_configure"):
+            table.tag_configure("changed", background="#145a78")
+            table.item(item, tags=("changed",))
+            old_job = app._analog_highlight_jobs.pop(tag.name, None)
+            if old_job: app.cancel_job(old_job)
+            app._analog_highlight_jobs[tag.name] = app.schedule_job(1000, lambda row=item, name=tag.name: _clear_analog_highlight(app, row, name))
+        app._analog_last_values[tag.name] = current
+    _bind_selected_analog(app)
+
+
+def _clear_analog_highlight(app, item, tag_name):
+    app._analog_highlight_jobs.pop(tag_name, None)
+    if widget_exists(app.analog_table) and item in app.analog_table.get_children():
+        app.analog_table.item(item, tags=())
+
+
 def begin_analog_refresh(app, tags):
     """Save visible settings; persistent pooled widgets are never destroyed."""
     LOGGER.info("Analog refresh started")
@@ -230,11 +455,22 @@ def create_analog_row_widgets(app):
     value_label.pack(side="left", padx=8)
     live = ctk.CTkLabel(top, text="0", width=80, font=("Arial", 18, "bold"))
     live.pack(side="left", padx=8)
+    plc_value = ctk.CTkLabel(top, text="PLC: —", width=100)
+    plc_value.pack(side="left", padx=6)
+    simulated_value = ctk.CTkLabel(top, text="Sim: —", width=100)
+    simulated_value.pack(side="left", padx=6)
     readonly = ctk.CTkLabel(top, text="PLC READ-ONLY", width=130, text_color="gray")
     profile_status = ctk.CTkLabel(top, text="MANUAL", width=100, text_color="gray")
     profile_status.pack(side="left", padx=8)
     slider = ctk.CTkSlider(card, from_=0, to=27648, width=750)
     slider.pack(padx=20, pady=12)
+    value_editor = ctk.CTkFrame(card)
+    value_editor.pack(fill="x", padx=10, pady=(0, 6))
+    ctk.CTkLabel(value_editor, text="Exact value").pack(side="left", padx=5)
+    numeric_entry = ctk.CTkEntry(value_editor, width=120)
+    numeric_entry.pack(side="left", padx=5)
+    write_button = ctk.CTkButton(value_editor, text="Write", width=90, command=lambda: _write_analog_entry(app))
+    write_button.pack(side="left", padx=5)
     profile = ctk.CTkFrame(card)
     profile.pack(fill="x", padx=10, pady=8)
     ctk.CTkLabel(profile, text="Modo").pack(side="left", padx=5)
@@ -254,7 +490,10 @@ def create_analog_row_widgets(app):
         "frame": card, "top": top, "profile_frame": profile,
         "address_label": address, "protocol_address_label": protocol_address,
         "interactive": True, "name_entry": name_widget, "slider": slider,
-        "value_label": value_label, "live": live, "readonly_label": readonly,
+        "value_label": value_label, "live": live, "plc_value": plc_value,
+        "simulated_value": simulated_value, "numeric_entry": numeric_entry,
+        "write_button": write_button, "value_editor": value_editor,
+        "readonly_label": readonly,
         "profile_mode": profile_mode, "profile_status": profile_status,
         "min_entry": min_entry, "max_entry": max_entry,
         "step_entry": step_entry, "interval_entry": interval_entry,
@@ -293,6 +532,9 @@ def bind_analog_row(app, row, index, tag):
     _replace_entry(row["name_entry"], tag.name)
     row["value_label"].configure(text=f"{initial_value:g} RAW")
     row["live"].configure(text=f"{initial_value:g}")
+    _replace_entry(row["numeric_entry"], f"{initial_value:g}")
+    row["plc_value"].configure(text=f"PLC: {getattr(app, '_plc_values', {}).get(tag.name, '—')}")
+    row["simulated_value"].configure(text=f"Sim: {getattr(app, '_simulated_values', {}).get(tag.name, initial_value)}")
     row["slider"].configure(from_=0, to=27648, command=lambda value, idx=index: on_slider_changed(app, idx, value))
     row["slider"].set(initial_value)
     row["start_button"].configure(command=lambda idx=index: on_profile_start(app, idx))

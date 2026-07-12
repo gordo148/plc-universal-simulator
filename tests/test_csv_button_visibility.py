@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.connection_state import ConnectionState
 from ui.tag_manager import update_csv_button_visibility
 
 
@@ -40,8 +41,9 @@ def test_csv_button_visibility_follows_selected_brand(
     tia_visible,
     schneider_visible,
 ):
+    state = ConnectionState(); state.set_brand(brand)
     app = SimpleNamespace(
-        brand_menu=Value(brand),
+        connection_state=state,
         tag_import_csv_button=Button(),
         tag_import_tia_csv_button=Button(),
         tag_import_schneider_csv_button=Button(),

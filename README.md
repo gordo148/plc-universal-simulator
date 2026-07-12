@@ -131,6 +131,71 @@ suggestions follow the selected PLC brand. In Rockwell mode the address field
 is hidden and the symbolic PLC address is the tag name. Simulator mode accepts
 any non-empty internal address.
 
+## Digital and Analog simulation workspace
+
+The simulation tabs use a master-detail layout designed for projects with
+thousands of tags. A lightweight, paginated table shows the signal database;
+only the selected tag owns a full editor, so changing pages or selecting a row
+does not create another set of buttons, entries, or sliders.
+
+- Search filters live after a short debounce and matches name, address, or data
+  type. Use the **×** button or **Esc** to clear it.
+- Click any column heading to alternate ascending and descending sorting. The
+  active heading displays ▲ or ▼.
+- Digital rows show live ON/OFF state, PLC and simulated values, and whether
+  the values differ. The editor provides Toggle/Pulse mode, pulse duration,
+  immediate toggle, and write controls.
+- Analog rows show current value, profile, and PLC/simulation difference. The
+  selected-tag editor provides exact-value entry, slider, limits, step,
+  interval, simulation mode, and profile Start/Stop controls.
+- Changed runtime values briefly highlight their table row.
+- Right-click a row for force/set and copy commands. Double-click toggles a
+  Digital signal or focuses the Analog exact-value editor.
+
+Keyboard shortcuts in either table:
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Select previous or next row |
+| PageUp / PageDown | Move by the visible table height |
+| Home / End | Select first or last visible row |
+| Enter / Space | Toggle Digital or edit Analog |
+| Delete | Force Digital OFF or set Analog to zero |
+
+Search text, page size, sort order, selected row, and selected tab are stored as
+optional UI state in project files. Older project files remain compatible.
+
+## Industrial Dashboard
+
+The Dashboard provides a fixed-layout engineering overview without creating a
+widget set per tag. Compact cards summarize PLC and communication health,
+project identity, tag-feature counts, simulation, alarms, trends, last read,
+and read-cycle duration.
+
+Dashboard-enabled tags appear in a searchable, sortable native table with
+quality, source, alarm, and trend state. Quick filters select data types, active
+alarms, simulated tags, or PLC-sourced values. Selecting a row updates one
+reusable detail panel; double-clicking opens the corresponding Digital or
+Analog editor with the same tag selected.
+
+The lower panels expose passive communication diagnostics, the existing alarm
+and Trend state, active simulation timers, project status, navigation, Trend
+start/stop, simulation stop, and project save actions. Recent meaningful events
+are kept in a bounded in-memory list. See [Dashboard documentation](docs/DASHBOARD.md).
+
+## Scalable Trends
+
+The Trends tab uses the same master-detail approach as the Digital and Analog
+tabs. A searchable, sortable, paged `ttk.Treeview` lists tags on the left, and
+one reusable editor controls the selected tag on the right. The chart and
+toolbar remain persistent during selection, search, filtering, and paging.
+
+Search matches name, address, and data type while typing. Filters cover enabled
+state, BOOL/INT/REAL, and visible/hidden curves. Space or Enter toggles the
+selected tag; Delete removes it; Ctrl+F focuses search; Escape clears search.
+Right-click provides enable, disable, show, hide, and copy commands. See
+[Trends documentation](docs/TRENDS.md).
+
 The Tag Manager is the source of truth. Deleting or changing a tag affects all
 runtime consumers generated from that tag database.
 

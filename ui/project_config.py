@@ -3,11 +3,15 @@ import json
 import logging
 import os
 import tempfile
-from tkinter import filedialog, messagebox
+from tkinter import TclError, filedialog, messagebox
 
 from core.tag_model import Tag
 from core.version import APP_NAME, APP_VERSION
-from ui.header import SCHNEIDER_MODELS, update_top_status_bar
+from ui.header import (
+    SCHNEIDER_MODELS, connection_brand, connection_value,
+    set_connection_brand, set_connection_value,
+    update_top_status_bar,
+)
 from ui.tag_manager import (
     get_numeric_tags,
     get_pid_output_tags,
@@ -118,7 +122,7 @@ def open_project_path(app, file_path):
 
 
 def build_project_data(app):
-    brand = app.brand_menu.get()
+    brand = connection_brand(app)
     pid_settings = {
         "sp": "10000",
         "sp_source": "Manual",
@@ -150,33 +154,33 @@ def build_project_data(app):
 
     connection = {
         "brand": brand,
-        "ip": "" if brand == "Simulator" else app.ip_entry.get(),
+        "ip": "" if brand == "Simulator" else connection_value(app, "ip"),
         "settings": {},
     }
     if brand == "Siemens":
         connection["settings"] = {
-            "rack": app.rack_entry.get(),
-            "slot": app.slot_entry.get(),
-            "db_number": app.db_entry.get(),
+            "rack": connection_value(app, "rack"),
+            "slot": connection_value(app, "slot"),
+            "db_number": connection_value(app, "db_number"),
         }
     elif brand == "Schneider":
         connection["settings"] = {
-            "model": app.schneider_model_menu.get(),
-            "port": app.port_entry.get(),
-            "slave_id": app.slave_entry.get(),
-            "coil_start": app.coil_start_entry.get(),
-            "register_start": app.reg_start_entry.get(),
+            "model": connection_value(app, "schneider_model"),
+            "port": connection_value(app, "port"),
+            "slave_id": connection_value(app, "slave_id"),
+            "coil_start": connection_value(app, "coil_start"),
+            "register_start": connection_value(app, "register_start"),
         }
     elif brand == "Modbus TCP":
         connection["settings"] = {
-            "port": app.port_entry.get(),
-            "slave_id": app.slave_entry.get(),
+            "port": connection_value(app, "port"),
+            "slave_id": connection_value(app, "slave_id"),
         }
     elif brand == "Omron":
         connection["settings"] = {
-            "port": app.port_entry.get(),
-            "destination_node": app.destination_node_entry.get(),
-            "source_node": app.source_node_entry.get(),
+            "port": connection_value(app, "omron_port"),
+            "destination_node": connection_value(app, "destination_node"),
+            "source_node": connection_value(app, "source_node"),
         }
 
     digital_inputs_by_tag = dict(getattr(app, "_digital_settings_cache", {}))
@@ -213,11 +217,13 @@ def build_project_data(app):
         for alarm in getattr(app, "alarms", [])
     ]
 
-    selected_curves = [
-        name
-        for name, variable in getattr(app, "trend_tag_vars", {}).items()
-        if variable.get()
-    ]
+    selected_curves = sorted(getattr(app, "trend_visible_tags", set()))
+    if not selected_curves:
+        selected_curves = [
+            name
+            for name, variable in getattr(app, "trend_tag_vars", {}).items()
+            if variable.get()
+        ]
     trend_auto_scale = getattr(app, "trend_auto_scale", None)
     pending_trends = getattr(app, "_pending_trend_settings", {})
     if not selected_curves and not hasattr(app, "trend_tag_vars"):
@@ -233,6 +239,23 @@ def build_project_data(app):
         ],
         "runtime_settings": {
             "digital_inputs": digital_inputs,
+            "ui_state": {
+                "selected_tab": app.tabs.get() if hasattr(app, "tabs") else "Dashboard",
+                "digital": {
+                    "selected_row": getattr(app, "_digital_selected_tag_name", None),
+                    "sort_column": getattr(app, "_digital_sort_column", "name"),
+                    "sort_descending": getattr(app, "_digital_sort_descending", False),
+                    "page_size": app.digital_page_size_menu.get() if hasattr(app, "digital_page_size_menu") else "50",
+                    "search": app.digital_search_entry.get() if hasattr(app, "digital_search_entry") else "",
+                },
+                "analog": {
+                    "selected_row": getattr(app, "_analog_selected_tag_name", None),
+                    "sort_column": getattr(app, "_analog_sort_column", "name"),
+                    "sort_descending": getattr(app, "_analog_sort_descending", False),
+                    "page_size": app.analog_page_size_menu.get() if hasattr(app, "analog_page_size_menu") else "50",
+                    "search": app.analog_search_entry.get() if hasattr(app, "analog_search_entry") else "",
+                },
+            },
         },
         "alarms": alarms,
         "pid": pid_settings,
@@ -328,22 +351,30 @@ def _apply_project_data(app, project, show_error=True):
             raise ValueError(f"Marca PLC inválida: {brand}")
 
         app.brand_menu.set(brand)
-        if brand == "Siemens":
-            app.create_siemens_options()
-        elif brand == "Schneider":
-            app.create_schneider_options()
-        elif brand == "Modbus TCP":
-            app.create_modbus_options()
-        elif brand == "Rockwell":
-            app.create_rockwell_options()
-        elif brand == "Omron":
-            app.create_omron_options()
-        else:
-            app.create_simulator_options()
+        set_connection_brand(app, brand)
+        app._connection_ui_rebuilding = True
+        try:
+            if brand == "Siemens":
+                app.create_siemens_options()
+            elif brand == "Schneider":
+                app.create_schneider_options()
+            elif brand == "Modbus TCP":
+                app.create_modbus_options()
+            elif brand == "Rockwell":
+                app.create_rockwell_options()
+            elif brand == "Omron":
+                app.create_omron_options()
+            else:
+                app.create_simulator_options()
 
+            if hasattr(app, "connection_state"):
+                set_connection_value(app, "ip", plc.get("ip", "192.168.1.10"))
+            else:
+                _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
+            _restore_connection_settings(app, brand, plc.get("settings", {}))
+        finally:
+            app._connection_ui_rebuilding = False
         update_tag_address_context(app)
-        _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
-        _restore_connection_settings(app, brand, plc.get("settings", {}))
 
         if hasattr(app, "ensure_tag_manager_tab"):
             app.ensure_tag_manager_tab()
@@ -370,6 +401,9 @@ def _apply_project_data(app, project, show_error=True):
             app.ensure_alarm_tab()
         reload_alarms(app, project.get("alarms", []))
         _restore_trends(app, project.get("trends", {}))
+        _restore_simulation_ui_state(
+            app, project.get("runtime_settings", {}).get("ui_state", {})
+        )
 
         from ui.dashboard_tab import clear_dashboard_events, update_dashboard
         clear_dashboard_events(app)
@@ -401,12 +435,21 @@ def _restore_tag_feature_configuration(tags, project):
 
 def _restore_connection_settings(app, brand, settings):
     if brand == "Siemens":
-        _set_entry(app.rack_entry, settings.get("rack", "0"))
-        _set_entry(app.slot_entry, settings.get("slot", "1"))
-        _set_entry(app.db_entry, settings.get("db_number", "100"))
+        if hasattr(app, "connection_state"):
+            set_connection_value(app, "rack", settings.get("rack", "0"))
+            set_connection_value(app, "slot", settings.get("slot", "1"))
+            set_connection_value(app, "db_number", settings.get("db_number", "100"))
+        else:
+            _set_entry(app.rack_entry, settings.get("rack", "0"))
+            _set_entry(app.slot_entry, settings.get("slot", "1"))
+            _set_entry(app.db_entry, settings.get("db_number", "100"))
         return
 
     if brand == "Modbus TCP":
+        if hasattr(app, "connection_state"):
+            set_connection_value(app, "port", settings.get("port", "502"))
+            set_connection_value(app, "slave_id", settings.get("slave_id", "1"))
+            return
         _set_entry(app.port_entry, settings.get("port", "502"))
         _set_entry(app.slave_entry, settings.get("slave_id", "1"))
         return
@@ -418,6 +461,11 @@ def _restore_connection_settings(app, brand, settings):
         return
 
     if brand == "Omron":
+        if hasattr(app, "connection_state"):
+            set_connection_value(app, "omron_port", settings.get("port", "9600"))
+            set_connection_value(app, "destination_node", settings.get("destination_node", "0"))
+            set_connection_value(app, "source_node", settings.get("source_node", "1"))
+            return
         _set_entry(app.port_entry, settings.get("port", "9600"))
         _set_entry(
             app.destination_node_entry,
@@ -430,11 +478,46 @@ def _restore_connection_settings(app, brand, settings):
     if model not in SCHNEIDER_MODELS:
         model = "M221"
     app.schneider_model_menu.set(model)
+    if hasattr(app, "connection_state"):
+        set_connection_value(app, "schneider_model", model)
+    if hasattr(app, "connection_state"):
+        set_connection_value(app, "port", settings.get("port", "502"))
+        set_connection_value(app, "slave_id", settings.get("slave_id", "1"))
+        set_connection_value(app, "coil_start", settings.get("coil_start", "0"))
+        set_connection_value(app, "register_start", settings.get("register_start", "0"))
+        app.schneider_info.configure(text=SCHNEIDER_MODELS[model]["description"])
+        return
     _set_entry(app.port_entry, settings.get("port", "502"))
     _set_entry(app.slave_entry, settings.get("slave_id", "1"))
     _set_entry(app.coil_start_entry, settings.get("coil_start", "0"))
     _set_entry(app.reg_start_entry, settings.get("register_start", "0"))
     app.schneider_info.configure(text=SCHNEIDER_MODELS[model]["description"])
+
+
+def _restore_simulation_ui_state(app, state):
+    """Restore optional UI-only state without changing the project schema version."""
+    if not isinstance(state, dict):
+        return
+    from ui.analog_tab import refresh_analog_tab
+    from ui.digital_tab import refresh_digital_tab
+    for prefix, refresh in (("digital", refresh_digital_tab), ("analog", refresh_analog_tab)):
+        tab_state = state.get(prefix, {})
+        if not isinstance(tab_state, dict): continue
+        entry = getattr(app, f"{prefix}_search_entry", None)
+        if entry is not None:
+            _set_entry(entry, tab_state.get("search", ""))
+        menu = getattr(app, f"{prefix}_page_size_menu", None)
+        size = str(tab_state.get("page_size", "50"))
+        if menu is not None and size in ("25", "50", "100", "250", "All"):
+            menu.set(size)
+        setattr(app, f"_{prefix}_sort_column", tab_state.get("sort_column", "name"))
+        setattr(app, f"_{prefix}_sort_descending", bool(tab_state.get("sort_descending", False)))
+        setattr(app, f"_{prefix}_selected_tag_name", tab_state.get("selected_row"))
+        refresh(app, reset_page=True)
+    selected_tab = state.get("selected_tab")
+    if selected_tab and hasattr(app, "tabs"):
+        try: app.tabs.set(selected_tab)
+        except (ValueError, TclError): pass
 
 
 def _restore_digital_settings(app, settings):
@@ -547,8 +630,16 @@ def _restore_trends(app, trends):
     refresh_trend_selectors(app)
 
     selected = set(trends.get("selected_curves", []))
-    for name, variable in app.trend_tag_vars.items():
-        variable.set(name in selected)
+    if hasattr(app, "trend_visible_tags"):
+        app.trend_visible_tags.clear()
+        app.trend_visible_tags.update(selected)
+        for tag in getattr(app, "tags", []):
+            from ui.trend_tab import _trend_config
+            _trend_config(app, tag)["visible"] = tag.name in selected
+        refresh_trend_selectors(app)
+    else:
+        for name, variable in app.trend_tag_vars.items():
+            variable.set(name in selected)
 
 
 def _default_project_data():

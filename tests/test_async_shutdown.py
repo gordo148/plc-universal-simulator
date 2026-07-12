@@ -23,6 +23,11 @@ class FakeRoot:
     def destroy(self):
         self.destroyed = True
 
+    def lift(self): pass
+    def focus_force(self): pass
+    def attributes(self, *_args): pass
+    def bell(self): pass
+
 
 def scheduler_app():
     root = FakeRoot()
@@ -34,6 +39,10 @@ def scheduler_app():
     app.schedule_job = lambda delay, callback: main_window.PLCSimulator.schedule_job(app, delay, callback)
     app.cancel_job = lambda job: main_window.PLCSimulator.cancel_job(app, job)
     app.cancel_pending_jobs = lambda: main_window.PLCSimulator.cancel_pending_jobs(app)
+    app._shutdown_marker = lambda marker, **details: main_window.PLCSimulator._shutdown_marker(app, marker, **details)
+    app._shutdown_watchdog = lambda: main_window.PLCSimulator._shutdown_watchdog(app)
+    app._log_shutdown_threads = lambda location: main_window.PLCSimulator._log_shutdown_threads(app, location)
+    app._log_shutdown_ui_diagnostics = lambda: main_window.PLCSimulator._log_shutdown_ui_diagnostics(app)
     return app
 
 
@@ -59,6 +68,27 @@ def test_delayed_callback_is_noop_after_shutdown_starts():
     app.app.callbacks[job]()
 
     assert calls == []
+
+
+def test_shutdown_thread_audit_includes_current_frame_and_stack(caplog):
+    app = scheduler_app()
+
+    with caplog.at_level("WARNING"):
+        app._log_shutdown_threads("test")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "SHUTDOWN THREAD" in message
+        and "name=MainThread" in message
+        and "daemon=False" in message
+        and "current_frame=" in message
+        for message in messages
+    )
+    assert any(
+        "SHUTDOWN THREAD STACK name=MainThread" in message
+        and "test_shutdown_thread_audit_includes_current_frame_and_stack" in message
+        for message in messages
+    )
 
 
 def test_close_immediately_after_import_cancels_jobs_before_destroy():
@@ -133,3 +163,82 @@ def test_close_while_simulation_profile_running_is_safe():
     analog_profiles.run_profile(app, 0)
 
     assert calls == []
+
+
+def test_on_close_executes_only_once():
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: False
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    saves, destroys = [], []
+    app._save_settings = lambda: saves.append(True)
+    app.app.destroy = lambda: destroys.append(True)
+
+    main_window.PLCSimulator.on_close(app)
+    main_window.PLCSimulator.on_close(app)
+
+    assert saves == [True]
+    assert destroys == [True]
+
+
+def test_clean_close_does_not_auto_save_project():
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: False
+    app.save_project = lambda: (_ for _ in ()).throw(AssertionError("project auto-save"))
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    app._save_settings = lambda: None
+    main_window.PLCSimulator.on_close(app)
+    assert app.app.destroyed is True
+
+
+def test_navigation_only_ui_state_does_not_mark_project_dirty(monkeypatch):
+    saved = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    current = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Trends"}}}
+    app = SimpleNamespace(_project_dirty=False, _saved_project_snapshot=saved)
+    monkeypatch.setattr(main_window, "build_project_data", lambda _app: current)
+    assert main_window.PLCSimulator.has_unsaved_changes(app) is False
+
+
+def test_project_content_change_still_marks_project_dirty(monkeypatch):
+    saved = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    current = {"tags": [{"name": "B"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    app = SimpleNamespace(_project_dirty=False, _saved_project_snapshot=saved)
+    monkeypatch.setattr(main_window, "build_project_data", lambda _app: current)
+    assert main_window.PLCSimulator.has_unsaved_changes(app) is True
+
+
+def test_dirty_close_profiles_confirmation_separately(monkeypatch):
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: True
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    app._save_settings = lambda: None
+    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *_args, **_kwargs: True)
+
+    main_window.PLCSimulator.on_close(app)
+
+    assert "unsaved_confirmation" in app._shutdown_timings
+    assert app._shutdown_timings["unsaved_confirmation"] >= 0
+
+
+def test_worker_join_is_bounded_and_not_repeated():
+    joins = []
+    worker = SimpleNamespace(
+        name="test-worker", join=lambda timeout: joins.append(timeout),
+        is_alive=lambda: False,
+    )
+    event = SimpleNamespace(set=lambda: None)
+    app = SimpleNamespace(worker_thread=worker, polling_thread=worker, worker_stop_event=event)
+    main_window.PLCSimulator._stop_shutdown_workers(app)
+    assert len(joins) == 1
+    assert 0 <= joins[0] <= 0.25
