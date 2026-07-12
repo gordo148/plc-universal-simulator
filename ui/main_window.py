@@ -955,13 +955,18 @@ class PLCSimulator:
 
         dirty = phase("tag_serialization", self.has_unsaved_changes)
         if dirty:
-            discard = messagebox.askyesno(
-                "Alterações não guardadas",
-                "O projeto tem alterações não guardadas. Fechar sem guardar?",
+            discard = phase(
+                "unsaved_confirmation",
+                lambda: messagebox.askyesno(
+                    "Alterações não guardadas",
+                    "O projeto tem alterações não guardadas. Fechar sem guardar?",
+                ),
             )
             if not discard:
                 self._shutdown_started = False
                 return
+        else:
+            timings["unsaved_confirmation"] = 0.0
         timings["project_save"] = 0.0  # Closing never auto-saves the project.
 
         def set_closing():

@@ -168,6 +168,23 @@ def test_clean_close_does_not_auto_save_project():
     assert app.app.destroyed is True
 
 
+def test_dirty_close_profiles_confirmation_separately(monkeypatch):
+    app = scheduler_app()
+    app.has_unsaved_changes = lambda: True
+    app.cyclic_read_enabled = False
+    app.pid_running = False
+    app.analog_profile_running = {}
+    app.cancel_pending_tab_refreshes = lambda: None
+    app.plc_service = SimpleNamespace(disconnect=lambda: None)
+    app._save_settings = lambda: None
+    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *_args: True)
+
+    main_window.PLCSimulator.on_close(app)
+
+    assert "unsaved_confirmation" in app._shutdown_timings
+    assert app._shutdown_timings["unsaved_confirmation"] >= 0
+
+
 def test_worker_join_is_bounded_and_not_repeated():
     joins = []
     worker = SimpleNamespace(
