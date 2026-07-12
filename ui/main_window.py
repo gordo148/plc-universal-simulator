@@ -22,7 +22,8 @@ from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
 
 from ui.header import (
-    create_header, SCHNEIDER_MODELS, connection_value, set_connection_value,
+    create_header, SCHNEIDER_MODELS, connection_brand, connection_value,
+    set_connection_brand, set_connection_value,
 )
 from ui.digital_tab import (
     cancel_digital_refresh,
@@ -360,7 +361,7 @@ class PLCSimulator:
         if getattr(self, "_connection_ui_rebuilding", False):
             return
         ip = connection_value(self, "ip").strip()
-        brand = self.brand_menu.get()
+        brand = connection_brand(self)
 
         try:
             if brand == "Simulator":
@@ -441,6 +442,7 @@ class PLCSimulator:
     def update_brand(self, value):
         if getattr(self, "_connection_ui_rebuilding", False):
             return
+        set_connection_brand(self, value)
         self._connection_ui_rebuilding = True
         try:
             self.disconnect()
@@ -466,6 +468,7 @@ class PLCSimulator:
             self.generate_signals()
 
     def update_schneider_model(self, model):
+        set_connection_value(self, "schneider_model", model)
         defaults = SCHNEIDER_MODELS[model]
 
         self.coil_start_entry.delete(0, "end")
@@ -500,7 +503,7 @@ class PLCSimulator:
             self.tag_runtime.invalidate(tag.name)
 
         signature = (
-            self.brand_menu.get(),
+            connection_brand(self),
             tuple((tag.name, tag.data_type, tag.direction, tag.address, tag.enabled_sim)
                   for tag in self.tags),
         )
@@ -937,7 +940,7 @@ class PLCSimulator:
         return saved is not None and build_project_data(self) != saved
 
     def _save_settings(self):
-        self.settings.plc_brand = self.brand_menu.get()
+        self.settings.plc_brand = connection_brand(self)
         self.settings.ip_address = connection_value(self, "ip")
         size = self.app.geometry().split("+", 1)[0]
         if "x" in size:

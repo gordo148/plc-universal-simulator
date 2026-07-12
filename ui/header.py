@@ -3,6 +3,8 @@ import os
 import customtkinter as ctk
 from tkinter import TclError
 
+from core.connection_state import ConnectionState
+
 SCHNEIDER_MODELS = {
     "M221": {"coil_start": 0, "reg_start": 0, "description": "M221 / Machine Expert Basic"},
     "M241": {"coil_start": 0, "reg_start": 0, "description": "M241 / Machine Expert"},
@@ -22,19 +24,28 @@ COLOR_WARNING = "#f59e0b"
 CONNECTION_DEFAULTS = {
     "ip": "192.168.1.10", "rack": "0", "slot": "1", "db_number": "100",
     "port": "502", "slave_id": "1", "coil_start": "0", "register_start": "0",
-    "omron_port": "9600", "destination_node": "0", "source_node": "1",
+    "schneider_model": "M221", "omron_port": "9600", "destination_node": "0", "source_node": "1",
 }
 
 
 def ensure_connection_state(app):
     """Create persistent connection state independent of disposable entries."""
+    if not hasattr(app, "connection_state"):
+        app.connection_state = ConnectionState()
+    app.connection_settings = app.connection_state
+    if not hasattr(app, "app") or app.app is None:
+        return
     if hasattr(app, "connection_vars"):
         return
-    app.connection_vars = {
-        name: ctk.StringVar(master=app.app, value=value)
-        for name, value in CONNECTION_DEFAULTS.items()
-    }
-    app.connection_settings = app.connection_vars
+    app.connection_vars = {}
+    app._connection_var_traces = {}
+    for name in CONNECTION_DEFAULTS:
+        variable = ctk.StringVar(master=app.app, value=app.connection_state.get(name))
+        trace_id = variable.trace_add(
+            "write", lambda *_args, key=name, var=variable: app.connection_state.set(key, var.get())
+        )
+        app.connection_vars[name] = variable
+        app._connection_var_traces[name] = trace_id
     app.ip_var = app.connection_vars["ip"]
     app.rack_var = app.connection_vars["rack"]
     app.slot_var = app.connection_vars["slot"]
@@ -42,29 +53,26 @@ def ensure_connection_state(app):
 
 
 def connection_value(app, name, default=""):
-    variable = getattr(app, "connection_vars", {}).get(name)
-    if variable is None:
-        attribute = {
-            "ip": "ip_entry", "rack": "rack_entry", "slot": "slot_entry",
-            "db_number": "db_entry", "port": "port_entry", "omron_port": "port_entry",
-            "slave_id": "slave_entry", "coil_start": "coil_start_entry",
-            "register_start": "reg_start_entry", "destination_node": "destination_node_entry",
-            "source_node": "source_node_entry",
-        }.get(name)
-        widget = getattr(app, attribute, None) if attribute else None
-        try:
-            return str(widget.get()) if widget is not None else CONNECTION_DEFAULTS.get(name, default)
-        except Exception:
-            return CONNECTION_DEFAULTS.get(name, default)
-    try:
-        return str(variable.get())
-    except Exception:
-        return CONNECTION_DEFAULTS.get(name, default)
+    state = getattr(app, "connection_state", None)
+    return state.get(name, CONNECTION_DEFAULTS.get(name, default)) if state else CONNECTION_DEFAULTS.get(name, default)
 
 
 def set_connection_value(app, name, value):
     ensure_connection_state(app)
-    app.connection_vars[name].set(str(value))
+    app.connection_state.set(name, value)
+    variable = getattr(app, "connection_vars", {}).get(name)
+    if variable is not None and variable.get() != str(value):
+        variable.set(str(value))
+
+
+def connection_brand(app):
+    state = getattr(app, "connection_state", None)
+    return state.brand if state else "Siemens"
+
+
+def set_connection_brand(app, brand):
+    ensure_connection_state(app)
+    app.connection_state.set_brand(brand)
 
 
 def _connection_entry(app, parent, name, width):
@@ -129,7 +137,7 @@ def create_header(app):
         ],
         command=app.update_brand
     )
-    app.brand_menu.set("Siemens")
+    app.brand_menu.set(connection_brand(app))
     app.brand_menu.grid(row=0, column=1, padx=5)
 
     app.ip_label = ctk.CTkLabel(app.header, text="IP")
@@ -246,14 +254,15 @@ def update_top_status_bar(app):
         if project_path else "Novo Projeto"
     )
     app.top_project.configure(text=project_name)
-    app.top_brand.configure(text=app.brand_menu.get())
-    if app.brand_menu.get() == "Simulator":
+    brand = connection_brand(app)
+    app.top_brand.configure(text=brand)
+    if brand == "Simulator":
         app.top_ip.configure(text="INTERNAL")
     else:
         app.top_ip.configure(text=connection_value(app, "ip") or "—")
 
     connected = app.plc_service.is_connected()
-    simulator_online = connected and app.brand_menu.get() == "Simulator"
+    simulator_online = connected and brand == "Simulator"
     app.top_mode.configure(
         text=(
             "● ONLINE SIM"
@@ -360,9 +369,10 @@ def create_schneider_options(app):
     app.schneider_model_menu = ctk.CTkOptionMenu(
         app.brand_frame,
         values=list(SCHNEIDER_MODELS.keys()),
+        variable=app.connection_vars["schneider_model"],
         command=app.update_schneider_model
     )
-    app.schneider_model_menu.set("M221")
+    app.schneider_model_menu.set(connection_value(app, "schneider_model"))
     app.schneider_model_menu.grid(row=0, column=1, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Porta").grid(row=0, column=2, padx=5)

@@ -9,6 +9,7 @@ import sys
 from tkinter import filedialog, messagebox, ttk
 
 from core.tag_model import Tag
+from ui.header import connection_brand
 from ui.table_utils import clear_entry, debounce
 
 
@@ -413,7 +414,7 @@ def configure_tag_table_style(widget):
 
 def update_csv_button_visibility(app):
     """Show only the CSV vendor importer for the selected PLC brand."""
-    brand = app.brand_menu.get()
+    brand = connection_brand(app)
     vendor_buttons = (
         (app.tag_import_tia_csv_button, brand == "Siemens"),
         (app.tag_import_schneider_csv_button, brand == "Schneider"),
@@ -460,12 +461,12 @@ def add_tag(app):
 
     data_type = app.tag_type_menu.get()
     address = resolve_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         name,
         app.tag_address_entry.get(),
     )
     valid, validation_message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         data_type,
         address,
     )
@@ -589,7 +590,7 @@ def validate_tag_address(brand, data_type, address):
 
 def suggest_tag_address(app):
     address = suggest_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         app.tags,
         app.tag_name_entry.get(),
@@ -600,7 +601,7 @@ def suggest_tag_address(app):
     app.tag_last_suggested_address = address
 
     _, message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         address,
     )
@@ -632,7 +633,7 @@ def _sync_rockwell_tag_address(app):
 
 
 def on_tag_name_edited(app):
-    if app.brand_menu.get() != "Rockwell":
+    if connection_brand(app) != "Rockwell":
         return
     _sync_rockwell_tag_address(app)
     validate_current_tag_address(app)
@@ -658,7 +659,7 @@ def validate_current_tag_address(app):
         return False
 
     valid, message = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         app.tag_type_menu.get(),
         address,
     )
@@ -673,7 +674,7 @@ def update_tag_address_context(app):
     if not hasattr(app, "tag_address_entry"):
         return
 
-    if app.brand_menu.get() == "Rockwell":
+    if connection_brand(app) == "Rockwell":
         if app.tag_address_entry.winfo_manager():
             app.tag_address_entry.pack_forget()
         _sync_rockwell_tag_address(app)
@@ -1250,7 +1251,7 @@ def import_tags_csv(app):
         return
 
     try:
-        imported_tags = read_tags_csv(file_path, app.brand_menu.get())
+        imported_tags = read_tags_csv(file_path, connection_brand(app))
     except (OSError, ValueError) as error:
         LOGGER.warning("Universal CSV import failed: %s", error)
         messagebox.showerror(
@@ -1370,7 +1371,7 @@ def apply_imported_tags(
         and hasattr(app, "brand_menu")
         and hasattr(app, "update_brand")
     ):
-        previous_brand = app.brand_menu.get()
+        previous_brand = connection_brand(app)
         brand_changed = previous_brand != target_brand
 
     def set_import_state(active):
@@ -1491,7 +1492,7 @@ def get_csv_template_path(brand):
 
 
 def export_csv_template(app):
-    template_path = get_csv_template_path(app.brand_menu.get())
+    template_path = get_csv_template_path(connection_brand(app))
     destination = filedialog.asksaveasfilename(
         defaultextension=".csv",
         filetypes=[("CSV files", "*.csv")],
@@ -1573,7 +1574,7 @@ def refresh_tag_table(app, view_only=False):
 def create_tag_row(app, tag, index=None):
     """Insert a lightweight native table row without per-cell widgets."""
     address_valid, _ = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         tag.data_type,
         tag.address,
     )
@@ -1682,7 +1683,7 @@ def delete_tag(app, tag):
 
 def is_tag_compatible(app, tag):
     valid, _ = validate_tag_address(
-        app.brand_menu.get(),
+        connection_brand(app),
         tag.data_type,
         tag.address,
     )
@@ -1706,7 +1707,7 @@ def update_tag_database_validation(app):
         app.tag_database_validation_label.configure(
             text=(
                 f"⚠ {len(invalid_tags)} tag(s) incompatível(is) com "
-                f"{app.brand_menu.get()}: {names}. Ignoradas pelos separadores runtime."
+                f"{connection_brand(app)}: {names}. Ignoradas pelos separadores runtime."
             ),
             text_color="red",
         )

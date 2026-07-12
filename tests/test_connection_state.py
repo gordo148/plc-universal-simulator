@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from core.connection_state import ConnectionState
 from ui import dashboard_tab, main_window, project_config
 
 
@@ -18,8 +19,8 @@ class Value:
     def get(self): return self.value
 
 
-def connection_vars():
-    return {"ip":Var("192.168.0.84"), "rack":Var("0"), "slot":Var("1"), "db_number":Var("2000"), "port":Var("502"), "slave_id":Var("1"), "coil_start":Var("0"), "register_start":Var("0"), "omron_port":Var("9600"), "destination_node":Var("0"), "source_node":Var("1")}
+def connection_state():
+    return ConnectionState(ip="192.168.0.84", rack="0", slot="1", db_number="2000")
 
 
 def stale_entries(app):
@@ -28,20 +29,20 @@ def stale_entries(app):
 
 
 def test_dashboard_connection_summary_uses_persistent_state():
-    app = stale_entries(SimpleNamespace(connection_vars=connection_vars()))
+    app = stale_entries(SimpleNamespace(connection_state=connection_state()))
     assert dashboard_tab._connection_summary(app, "Siemens") == "192.168.0.84 · Rack 0 Slot 1 DB 2000"
 
 
 def test_connect_uses_persistent_siemens_values(monkeypatch):
     calls = []
     service = SimpleNamespace(connect=lambda *args, **kwargs: calls.append((args, kwargs)) or True)
-    app = stale_entries(SimpleNamespace(connection_vars=connection_vars(), _connection_ui_rebuilding=False, brand_menu=Value("Siemens"), plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), cyclic_read_enabled=False, start_cyclic_read=lambda: None))
+    app = stale_entries(SimpleNamespace(connection_state=connection_state(), _connection_ui_rebuilding=False, plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), cyclic_read_enabled=False, start_cyclic_read=lambda: None))
     main_window.PLCSimulator.connect(app)
     assert calls == [(('Siemens', '192.168.0.84'), {'rack':'0', 'slot':'1', 'db_number':'2000'})]
 
 
 def test_project_snapshot_uses_persistent_state(project_app):
-    project_app.connection_vars = connection_vars()
+    project_app.connection_state = connection_state()
     stale_entries(project_app)
     connection = project_config.build_project_data(project_app)["plc"]
     assert connection["ip"] == "192.168.0.84"
@@ -64,6 +65,6 @@ def test_connect_is_ignored_during_connection_rebuild():
 
 
 def test_connection_restore_updates_model_without_entries():
-    app = stale_entries(SimpleNamespace(connection_vars=connection_vars(), app=None))
+    app = stale_entries(SimpleNamespace(connection_state=connection_state(), app=None))
     project_config._restore_connection_settings(app, "Siemens", {"rack":"2", "slot":"3", "db_number":"400"})
-    assert [app.connection_vars[key].get() for key in ("rack","slot","db_number")] == ["2","3","400"]
+    assert [app.connection_state.get(key) for key in ("rack","slot","db_number")] == ["2","3","400"]

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.tag_model import TagDefinition
+from core.connection_state import ConnectionState
 
 
 class Value:
@@ -26,6 +27,7 @@ class Recorder:
 @pytest.fixture
 def project_app():
     app = SimpleNamespace(
+        connection_state=ConnectionState(),
         brand_menu=Value("Siemens"),
         ip_entry=Value("192.168.1.10"),
         rack_entry=Value("0"),

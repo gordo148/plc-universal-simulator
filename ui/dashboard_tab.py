@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 from core.version import APP_VERSION
-from ui.header import connection_value
+from ui.header import connection_brand, connection_value
 from ui.table_utils import debounce, filter_tags, sort_tags
 from ui.tag_manager import get_dashboard_tags
 
@@ -43,7 +43,7 @@ def dashboard_alarm_summary(app):
 
 
 def dashboard_summary_values(app):
-    counts=dashboard_counts(app); connected=app.plc_service.is_connected(); brand=app.brand_menu.get(); diagnostics=app.plc_service.diagnostics_snapshot()
+    counts=dashboard_counts(app); connected=app.plc_service.is_connected(); brand=connection_brand(app); diagnostics=app.plc_service.diagnostics_snapshot()
     project=os.path.basename(getattr(app,"project_path","") or "No project"); endpoint="Internal Simulator" if brand=="Simulator" else connection_value(app,"ip")
     return {"PLC":("ONLINE" if connected else "OFFLINE", "green" if connected else "red"),"Brand":(brand,"neutral"),"Endpoint":(endpoint,"cyan"),"Project":(project,"neutral"),"Tags":(counts["total"],"neutral"),"Simulation":(counts["simulation"],"amber"),"Trends":(counts["trends"],"cyan"),"Alarms":(counts["alarms"],"amber"),"Dashboard":(counts["dashboard"],"cyan"),"Communication":("HEALTHY" if connected and not diagnostics["read_error_count"] else ("INACTIVE" if not connected else "DEGRADED"),"green" if connected and not diagnostics["read_error_count"] else ("neutral" if not connected else "amber")),"Last read":(_fmt_time(diagnostics["last_read_timestamp"]),"neutral"),"Read cycle":(f"{diagnostics['last_read_duration_ms']:.1f} ms","cyan")}
 
@@ -198,7 +198,7 @@ def refresh_dashboard_table(app):
         tags = [tag for tag in tags if tag.name in active]
     values = {tag.name: app.tag_runtime.get_value(tag.name) for tag in tags}
     alarm_names = {a.get("source") for a in getattr(app,"alarms",[]) if a.get("active")}
-    brand=app.brand_menu.get()
+    brand=connection_brand(app)
     def key(tag):
         runtime=app.tag_runtime.get(tag.name)
         mapping={"status":bool(runtime and runtime.valid),"name":tag.name.casefold(),"address":tag.address.casefold(),"type":tag.data_type,"value":values[tag.name] if values[tag.name] is not None else float("-inf"),"source":_source(runtime,brand),"alarm":tag.name in alarm_names,"trend":tag.enabled_trend}
@@ -229,7 +229,7 @@ def refresh_dashboard_detail(app):
     tag = app._dashboard_visible_tags[index]; app._dashboard_selected_name = tag.name
     runtime = app.tag_runtime.get(tag.name); valid = bool(runtime and runtime.valid); effective = runtime.value if valid else "—"
     plc = getattr(app,"_plc_values",{}).get(tag.name,"—"); simulated = getattr(app,"_simulated_values",{}).get(tag.name,"—")
-    source = _source(runtime, app.brand_menu.get()); updated = time.strftime("%H:%M:%S",time.localtime(runtime.updated_at)) if valid and runtime.updated_at else "Never"
+    source = _source(runtime, connection_brand(app)); updated = time.strftime("%H:%M:%S",time.localtime(runtime.updated_at)) if valid and runtime.updated_at else "Never"
     content = {"Name":tag.name,"Address":tag.address,"Type / Direction":f"{tag.data_type} / {tag.direction}","Effective value":effective,"PLC value":plc,"Simulated value":simulated,"Source / Quality":f"{source} / {'GOOD' if valid else 'BAD'}","Features":f"Sim {tag.enabled_sim} · Trend {tag.enabled_trend} · Alarm {tag.enabled_alarm} · Dashboard {tag.enabled_dashboard}","Last update":updated}
     for field,value in content.items(): app.dashboard_detail_labels[field].configure(text=f"{field}: {value}")
     if tag.data_type == "BOOL" and valid: app.dashboard_detail_indicator.configure(text="● ON" if bool(effective) else "● OFF",text_color=COLORS["green"] if bool(effective) else COLORS["red"])
@@ -251,7 +251,7 @@ def open_selected_dashboard_tag(app):
 def update_dashboard(app, last_message=None):
     if not hasattr(app,"dashboard_cards"): return
     if last_message: record_dashboard_event(app,last_message)
-    values=dashboard_summary_values(app); connected=app.plc_service.is_connected(); brand=app.brand_menu.get(); diagnostics=app.plc_service.diagnostics_snapshot(); project=os.path.basename(getattr(app,"project_path","") or "No project")
+    values=dashboard_summary_values(app); connected=app.plc_service.is_connected(); brand=connection_brand(app); diagnostics=app.plc_service.diagnostics_snapshot(); project=os.path.basename(getattr(app,"project_path","") or "No project")
     for title,(value,color) in values.items(): app.dashboard_cards[title].configure(text=str(value),text_color=COLORS[color])
     refresh_dashboard_table(app)
     alarm=dashboard_alarm_summary(app); trend_data=getattr(app,"trend_data",{"time":[],"tags":{}}); selected_trends=len(getattr(app,"trend_visible_tags",set())) if hasattr(app,"trend_visible_tags") else sum(v.get() for v in getattr(app,"trend_tag_vars",{}).values()) if hasattr(app,"trend_tag_vars") else 0

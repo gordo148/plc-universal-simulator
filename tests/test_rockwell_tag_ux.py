@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from core.connection_state import ConnectionState
 from ui.tag_manager import resolve_tag_address, update_tag_address_context
 
 
@@ -49,8 +50,10 @@ def test_non_rockwell_address_resolution_is_unchanged():
 
 def test_rockwell_context_hides_address_entry_and_keeps_internal_address():
     entry = Entry("DBX0.0")
+    state = ConnectionState(); state.set_brand("Rockwell")
     app = SimpleNamespace(
-        brand_menu=Value("Rockwell"),
+        connection_state=state,
+        tags=[],
         tag_name_entry=Value("Motor_Run"),
         tag_type_menu=Value("BOOL"),
         tag_address_entry=entry,

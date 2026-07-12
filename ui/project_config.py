@@ -8,7 +8,8 @@ from tkinter import TclError, filedialog, messagebox
 from core.tag_model import Tag
 from core.version import APP_NAME, APP_VERSION
 from ui.header import (
-    SCHNEIDER_MODELS, connection_value, set_connection_value,
+    SCHNEIDER_MODELS, connection_brand, connection_value,
+    set_connection_brand, set_connection_value,
     update_top_status_bar,
 )
 from ui.tag_manager import (
@@ -121,7 +122,7 @@ def open_project_path(app, file_path):
 
 
 def build_project_data(app):
-    brand = app.brand_menu.get()
+    brand = connection_brand(app)
     pid_settings = {
         "sp": "10000",
         "sp_source": "Manual",
@@ -164,7 +165,7 @@ def build_project_data(app):
         }
     elif brand == "Schneider":
         connection["settings"] = {
-            "model": app.schneider_model_menu.get(),
+            "model": connection_value(app, "schneider_model"),
             "port": connection_value(app, "port"),
             "slave_id": connection_value(app, "slave_id"),
             "coil_start": connection_value(app, "coil_start"),
@@ -350,6 +351,7 @@ def _apply_project_data(app, project, show_error=True):
             raise ValueError(f"Marca PLC inválida: {brand}")
 
         app.brand_menu.set(brand)
+        set_connection_brand(app, brand)
         app._connection_ui_rebuilding = True
         try:
             if brand == "Siemens":
@@ -365,7 +367,7 @@ def _apply_project_data(app, project, show_error=True):
             else:
                 app.create_simulator_options()
 
-            if hasattr(app, "connection_vars"):
+            if hasattr(app, "connection_state"):
                 set_connection_value(app, "ip", plc.get("ip", "192.168.1.10"))
             else:
                 _set_entry(app.ip_entry, plc.get("ip", "192.168.1.10"))
@@ -433,7 +435,7 @@ def _restore_tag_feature_configuration(tags, project):
 
 def _restore_connection_settings(app, brand, settings):
     if brand == "Siemens":
-        if hasattr(app, "connection_vars"):
+        if hasattr(app, "connection_state"):
             set_connection_value(app, "rack", settings.get("rack", "0"))
             set_connection_value(app, "slot", settings.get("slot", "1"))
             set_connection_value(app, "db_number", settings.get("db_number", "100"))
@@ -444,7 +446,7 @@ def _restore_connection_settings(app, brand, settings):
         return
 
     if brand == "Modbus TCP":
-        if hasattr(app, "connection_vars"):
+        if hasattr(app, "connection_state"):
             set_connection_value(app, "port", settings.get("port", "502"))
             set_connection_value(app, "slave_id", settings.get("slave_id", "1"))
             return
@@ -459,7 +461,7 @@ def _restore_connection_settings(app, brand, settings):
         return
 
     if brand == "Omron":
-        if hasattr(app, "connection_vars"):
+        if hasattr(app, "connection_state"):
             set_connection_value(app, "omron_port", settings.get("port", "9600"))
             set_connection_value(app, "destination_node", settings.get("destination_node", "0"))
             set_connection_value(app, "source_node", settings.get("source_node", "1"))
@@ -476,7 +478,9 @@ def _restore_connection_settings(app, brand, settings):
     if model not in SCHNEIDER_MODELS:
         model = "M221"
     app.schneider_model_menu.set(model)
-    if hasattr(app, "connection_vars"):
+    if hasattr(app, "connection_state"):
+        set_connection_value(app, "schneider_model", model)
+    if hasattr(app, "connection_state"):
         set_connection_value(app, "port", settings.get("port", "502"))
         set_connection_value(app, "slave_id", settings.get("slave_id", "1"))
         set_connection_value(app, "coil_start", settings.get("coil_start", "0"))

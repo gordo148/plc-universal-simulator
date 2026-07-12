@@ -57,9 +57,9 @@ def test_corrupted_project_is_rejected(tmp_path, monkeypatch):
 
 
 def test_modbus_tcp_project_connection_settings_round_trip(project_app):
-    project_app.brand_menu.value = "Modbus TCP"
-    project_app.port_entry = type(project_app.ip_entry)("1502")
-    project_app.slave_entry = type(project_app.ip_entry)("7")
+    project_app.connection_state.set_brand("Modbus TCP")
+    project_app.connection_state.port = "1502"
+    project_app.connection_state.slave_id = "7"
 
     project = project_config.build_project_data(project_app)
     staged = project_config._stage_project_data(project)
@@ -72,7 +72,7 @@ def test_modbus_tcp_project_connection_settings_round_trip(project_app):
 
 
 def test_rockwell_project_requires_only_ip(project_app):
-    project_app.brand_menu.value = "Rockwell"
+    project_app.connection_state.set_brand("Rockwell")
     project_app.tags[0].address = "Start_Button"
     project_app.tags[1].address = "Tank_Level"
 
@@ -91,11 +91,10 @@ def test_rockwell_project_requires_only_ip(project_app):
 
 
 def test_omron_project_preserves_fins_connection_settings(project_app):
-    value_type = type(project_app.ip_entry)
-    project_app.brand_menu.value = "Omron"
-    project_app.port_entry = value_type("9600")
-    project_app.destination_node_entry = value_type("10")
-    project_app.source_node_entry = value_type("20")
+    project_app.connection_state.set_brand("Omron")
+    project_app.connection_state.omron_port = "9600"
+    project_app.connection_state.destination_node = "10"
+    project_app.connection_state.source_node = "20"
     project_app.tags[0].address = "CIO0.00"
     project_app.tags[1].address = "D300"
 
@@ -112,7 +111,7 @@ def test_omron_project_preserves_fins_connection_settings(project_app):
 
 
 def test_simulator_project_has_no_network_or_runtime_values(project_app):
-    project_app.brand_menu.value = "Simulator"
+    project_app.connection_state.set_brand("Simulator")
     project_app.tags[0].address = "Motor_Run"
     project_app.tags[1].address = "Tank_Level"
     project_app.tag_runtime_values = {"Motor_Run": True, "Tank_Level": 42.5}

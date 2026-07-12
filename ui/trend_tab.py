@@ -61,15 +61,21 @@ def create_trend_tab(app):
 
     body = ctk.CTkFrame(frame)
     body.pack(fill="both", expand=True, padx=8, pady=4)
-    left = ctk.CTkFrame(body, width=520)
-    left.pack(side="left", fill="both", expand=False, padx=(0, 6))
+    left = ctk.CTkFrame(body, width=380)
+    left.pack(side="left", fill="y", expand=False, padx=(0, 6))
+    left.pack_propagate(False)
+    right = ctk.CTkFrame(body)
+    right.pack(side="right", fill="both", expand=True, padx=(6, 0))
     search = ctk.CTkFrame(left)
     search.pack(fill="x", padx=6, pady=6)
     ctk.CTkLabel(search, text="Search").pack(side="left", padx=(3, 2))
-    app.trend_search_entry = ctk.CTkEntry(search, width=205, placeholder_text="Name, address or type")
+    app.trend_search_entry = ctk.CTkEntry(search, width=250, placeholder_text="Name, address or type")
     app.trend_search_entry.pack(side="left", padx=3)
     ctk.CTkButton(search, text="×", width=30, command=lambda: clear_trend_search(app)).pack(side="left", padx=(0, 6))
-    app.trend_filter_menu = ctk.CTkOptionMenu(search, values=list(TREND_FILTERS), width=95, command=lambda _v: refresh_trend_selectors(app, reset_page=True))
+    filters = ctk.CTkFrame(left)
+    filters.pack(fill="x", padx=6, pady=(0, 6))
+    ctk.CTkLabel(filters, text="Filter").pack(side="left", padx=(3, 8))
+    app.trend_filter_menu = ctk.CTkOptionMenu(filters, values=list(TREND_FILTERS), width=150, command=lambda _v: refresh_trend_selectors(app, reset_page=True))
     app.trend_filter_menu.set("All")
     app.trend_filter_menu.pack(side="left", padx=3)
     app.trend_search_entry.bind("<KeyRelease>", lambda event: _trend_search_key(app, event))
@@ -80,7 +86,7 @@ def create_trend_tab(app):
     table_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
     columns = ("status", "name", "address", "type", "value")
     app.trend_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=16)
-    for column, title, width in (("status", "Status", 70), ("name", "Name", 150), ("address", "Address", 95), ("type", "Type", 55), ("value", "Current value", 90)):
+    for column, title, width in (("status", "Status", 58), ("name", "Name", 115), ("address", "Address", 75), ("type", "Type", 45), ("value", "Value", 65)):
         app.trend_table.heading(column, text=title, command=lambda col=column: sort_trend_table(app, col))
         app.trend_table.column(column, width=width, anchor="w" if column == "name" else "center")
     scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=app.trend_table.yview)
@@ -100,10 +106,10 @@ def create_trend_tab(app):
     app.trend_next_button = ctk.CTkButton(paging, text="Next", width=55, command=lambda: change_trend_page(app, 1)); app.trend_next_button.pack(side="right", padx=3)
     app.trend_previous_button = ctk.CTkButton(paging, text="Previous", width=65, command=lambda: change_trend_page(app, -1)); app.trend_previous_button.pack(side="right", padx=3)
 
-    editor = app.trend_editor = ctk.CTkFrame(body, width=315)
-    editor.pack(side="right", fill="y", padx=(6, 0))
+    editor = app.trend_editor = ctk.CTkFrame(right)
+    editor.pack(side="bottom", fill="x", padx=6, pady=(6, 6))
     app.trend_editor_title = ctk.CTkLabel(editor, text="Select a trend tag", font=("Arial", 14, "bold"))
-    app.trend_editor_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 8))
+    app.trend_editor_title.grid(row=0, column=0, columnspan=8, sticky="w", padx=12, pady=(10, 5))
     app.trend_editor_fields = {}
     specs = (
         ("enabled", "Trend enabled", "switch", None), ("color", "Color", "menu", COLORS),
@@ -111,15 +117,18 @@ def create_trend_tab(app):
         ("visible", "Visible", "switch", None), ("sample_rate_ms", "Sample rate (ms)", "entry", None),
         ("history_size", "History size", "entry", None), ("buffer_size", "Buffer size", "entry", None),
     )
-    for row, (key, label, kind, values) in enumerate(specs, 1):
-        ctk.CTkLabel(editor, text=label, anchor="w", width=120).grid(row=row, column=0, sticky="w", padx=10, pady=4)
+    for index, (key, label, kind, values) in enumerate(specs):
+        group, band = index % 4, index // 4
+        label_row, widget_row, column = 1 + band * 2, 2 + band * 2, group * 2
+        editor.grid_columnconfigure(column + 1, weight=1)
+        ctk.CTkLabel(editor, text=label, anchor="w").grid(row=label_row, column=column, columnspan=2, sticky="w", padx=(10, 4), pady=(3, 0))
         if kind == "switch": widget = ctk.CTkSwitch(editor, text="", width=55)
         elif kind == "menu": widget = ctk.CTkOptionMenu(editor, values=values, width=125)
         else: widget = ctk.CTkEntry(editor, width=125)
-        widget.grid(row=row, column=1, padx=10, pady=4)
+        widget.grid(row=widget_row, column=column, columnspan=2, sticky="ew", padx=(10, 8), pady=(1, 4))
         app.trend_editor_fields[key] = widget
     buttons = ctk.CTkFrame(editor)
-    buttons.grid(row=10, column=0, columnspan=2, padx=8, pady=10)
+    buttons.grid(row=5, column=0, columnspan=8, sticky="ew", padx=8, pady=(5, 9))
     for index, (text, action) in enumerate((("Enable Trend", True), ("Disable Trend", False), ("Show", "show"), ("Hide", "hide"), ("Remove from Trend", "remove"))):
         ctk.CTkButton(buttons, text=text, width=125, command=lambda value=action: trend_editor_action(app, value)).grid(row=index // 2, column=index % 2, padx=3, pady=3)
     for widget in app.trend_editor_fields.values():
@@ -137,9 +146,9 @@ def create_trend_tab(app):
     app.trend_fig.set_facecolor("white")
     app.trend_ax.set_facecolor("white")
     configure_axes(app)
-    app.trend_canvas = FigureCanvasTkAgg(app.trend_fig, master=frame)
+    app.trend_canvas = FigureCanvasTkAgg(app.trend_fig, master=right)
     app.trend_canvas.draw()
-    app.trend_canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=(4, 8))
+    app.trend_canvas.get_tk_widget().pack(side="top", fill="both", expand=True, padx=6, pady=(6, 0))
     refresh_trend_selectors(app)
     LOGGER.info("Trends master-detail created: widgets_created=38 per_tag_widgets=0 structure_time_ms=%.3f", (time.perf_counter() - started) * 1000)
 

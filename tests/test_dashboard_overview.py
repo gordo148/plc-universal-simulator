@@ -1,5 +1,6 @@
 import time
 from types import SimpleNamespace
+from core.connection_state import ConnectionState
 
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
@@ -22,7 +23,7 @@ def test_summary_card_counts_and_online_offline_state():
         is_connected=lambda:False,
         diagnostics_snapshot=lambda:{"read_error_count":0,"last_read_timestamp":None,"last_read_duration_ms":0},
     )
-    app=SimpleNamespace(tags=make_tags(),plc_service=service,brand_menu=SimpleNamespace(get=lambda:"Siemens"),ip_entry=SimpleNamespace(get=lambda:"10.0.0.1"),project_path=None)
+    app=SimpleNamespace(tags=make_tags(),plc_service=service,connection_state=ConnectionState(ip="10.0.0.1"),project_path=None)
     counts=dashboard_tab.dashboard_counts(app); values=dashboard_tab.dashboard_summary_values(app)
     assert counts == {"total":4,"simulation":2,"trends":1,"alarms":1,"dashboard":3}
     assert values["PLC"] == ("OFFLINE","red")
@@ -32,7 +33,8 @@ def test_summary_card_counts_and_online_offline_state():
 
 def test_internal_simulator_endpoint():
     service=SimpleNamespace(is_connected=lambda:True,diagnostics_snapshot=lambda:{"read_error_count":0,"last_read_timestamp":None,"last_read_duration_ms":1.5})
-    app=SimpleNamespace(tags=[],plc_service=service,brand_menu=SimpleNamespace(get=lambda:"Simulator"),ip_entry=SimpleNamespace(get=lambda:""),project_path=None)
+    state=ConnectionState(); state.set_brand("Simulator")
+    app=SimpleNamespace(tags=[],plc_service=service,connection_state=state,project_path=None)
     assert dashboard_tab.dashboard_summary_values(app)["Endpoint"][0] == "Internal Simulator"
 
 
@@ -111,8 +113,9 @@ def test_unchanged_table_signature_skips_tree_rebuild(monkeypatch):
         def selection(self):return self.selected
         def selection_set(self,item):self.selected=(item,)
         def index(self,item):return int(item)
+    state=ConnectionState(); state.set_brand("Simulator")
     app=SimpleNamespace(
-        tags=[tag],tag_runtime=runtime,alarms=[],brand_menu=SimpleNamespace(get=lambda:"Simulator"),
+        tags=[tag],tag_runtime=runtime,alarms=[],connection_state=state,
         dashboard_search_entry=SimpleNamespace(get=lambda:""),dashboard_filter_menu=SimpleNamespace(get=lambda:"All"),
         _dashboard_sort_column="name",_dashboard_sort_descending=False,_dashboard_selected_name=None,
         dashboard_tag_table=Table(),_dashboard_visible_tags=[],

@@ -93,8 +93,9 @@ def test_brand_switching_revalidates_existing_tags():
         TagDefinition("OmronTag", "BOOL", "Input", "CIO0.00"),
         TagDefinition("SimulatorTag", "REAL", "Input", "internal/level"),
     ]
-    brand = Value("Siemens")
-    app = SimpleNamespace(tags=tags, brand_menu=brand)
+    from core.connection_state import ConnectionState
+    state = ConnectionState()
+    app = SimpleNamespace(tags=tags, connection_state=state)
 
     expected_valid = {
         "Siemens": {"SiemensTag"},
@@ -105,7 +106,7 @@ def test_brand_switching_revalidates_existing_tags():
         "Simulator": {tag.name for tag in tags},
     }
     for selected_brand, expected in expected_valid.items():
-        brand.value = selected_brand
+        state.set_brand(selected_brand)
         invalid = tag_manager.get_invalid_tags_for_brand(app)
         valid_names = {tag.name for tag in tags if tag not in invalid}
         assert valid_names == expected
@@ -233,7 +234,6 @@ def test_trend_export_blanks_invalid_and_bad_samples(tmp_path, monkeypatch):
     invalid = trend_tab._numeric_value("invalid")
     app = SimpleNamespace(
         tags=[tag],
-        brand_menu=Value("Simulator"),
         trend_data={
             "time": [0, 1, 2, 3, 4],
             "tags": {
@@ -289,9 +289,11 @@ def test_alarm_evaluation_covers_hh_h_l_ll_and_bad_quality(monkeypatch):
         alarm_definition("LOW", 20),
         alarm_definition("LOW LOW", 10),
     ]
+    from core.connection_state import ConnectionState
+    state = ConnectionState(); state.set_brand("Simulator")
     app = SimpleNamespace(
         tags=[tag],
-        brand_menu=Value("Simulator"),
+        connection_state=state,
         tag_runtime=cache,
         alarms=alarms,
         alarm_rows=[],
