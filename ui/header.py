@@ -326,13 +326,34 @@ def hide_alarm_banner(app):
 
 
 def clear_brand_frame(app):
+    """Hide persistent brand panels; connection widgets are never destroyed."""
     _set_ip_visibility(app, True)
-    children = tuple(app.brand_frame.winfo_children())
-    for attribute, value in tuple(vars(app).items()):
-        if value in children:
-            setattr(app, attribute, None)
-    for widget in children:
-        widget.destroy()
+    for frame in getattr(app, "connection_option_frames", {}).values():
+        frame.grid_remove()
+
+
+def _show_connection_frame(app, brand):
+    if not hasattr(app, "connection_option_frames"):
+        app.connection_option_frames = {}
+        app.connection_option_widgets = {}
+    clear_brand_frame(app)
+    frame = app.connection_option_frames.get(brand)
+    if frame is None:
+        frame = ctk.CTkFrame(app.brand_frame, fg_color="transparent")
+        app.connection_option_frames[brand] = frame
+        app.connection_option_widgets[brand] = {}
+        created = True
+    else:
+        created = False
+    frame.grid(row=0, column=0, sticky="w")
+    for attribute, widget in app.connection_option_widgets[brand].items():
+        setattr(app, attribute, widget)
+    return frame, created
+
+
+def _remember_connection_widget(app, brand, attribute, widget):
+    app.connection_option_widgets[brand][attribute] = widget
+    setattr(app, attribute, widget)
 
 
 def _set_ip_visibility(app, visible):
@@ -345,97 +366,118 @@ def _set_ip_visibility(app, visible):
 
 
 def create_siemens_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Siemens")
+    if not created:
+        return
 
-    ctk.CTkLabel(app.brand_frame, text="Rack").grid(row=0, column=0, padx=5)
-    app.rack_entry = _connection_entry(app, app.brand_frame, "rack", 70)
+    ctk.CTkLabel(frame, text="Rack").grid(row=0, column=0, padx=5)
+    app.rack_entry = _connection_entry(app, frame, "rack", 70)
     app.rack_entry.grid(row=0, column=1, padx=5)
+    _remember_connection_widget(app, "Siemens", "rack_entry", app.rack_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="Slot").grid(row=0, column=2, padx=5)
-    app.slot_entry = _connection_entry(app, app.brand_frame, "slot", 70)
+    ctk.CTkLabel(frame, text="Slot").grid(row=0, column=2, padx=5)
+    app.slot_entry = _connection_entry(app, frame, "slot", 70)
     app.slot_entry.grid(row=0, column=3, padx=5)
+    _remember_connection_widget(app, "Siemens", "slot_entry", app.slot_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="DB").grid(row=0, column=4, padx=5)
-    app.db_entry = _connection_entry(app, app.brand_frame, "db_number", 80)
+    ctk.CTkLabel(frame, text="DB").grid(row=0, column=4, padx=5)
+    app.db_entry = _connection_entry(app, frame, "db_number", 80)
     app.db_entry.grid(row=0, column=5, padx=5)
+    _remember_connection_widget(app, "Siemens", "db_entry", app.db_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="Siemens: DBX / DBW", text_color="gray").grid(row=0, column=6, padx=20)
+    ctk.CTkLabel(frame, text="Siemens: DBX / DBW", text_color="gray").grid(row=0, column=6, padx=20)
 
 
 def create_schneider_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Schneider")
+    if not created:
+        return
 
-    ctk.CTkLabel(app.brand_frame, text="Modelo").grid(row=0, column=0, padx=5)
+    ctk.CTkLabel(frame, text="Modelo").grid(row=0, column=0, padx=5)
     app.schneider_model_menu = ctk.CTkOptionMenu(
-        app.brand_frame,
+        frame,
         values=list(SCHNEIDER_MODELS.keys()),
         variable=app.connection_vars["schneider_model"],
         command=app.update_schneider_model
     )
     app.schneider_model_menu.set(connection_value(app, "schneider_model"))
     app.schneider_model_menu.grid(row=0, column=1, padx=5)
+    _remember_connection_widget(app, "Schneider", "schneider_model_menu", app.schneider_model_menu)
 
-    ctk.CTkLabel(app.brand_frame, text="Porta").grid(row=0, column=2, padx=5)
-    app.port_entry = _connection_entry(app, app.brand_frame, "port", 80)
+    ctk.CTkLabel(frame, text="Porta").grid(row=0, column=2, padx=5)
+    app.port_entry = _connection_entry(app, frame, "port", 80)
     app.port_entry.grid(row=0, column=3, padx=5)
+    _remember_connection_widget(app, "Schneider", "port_entry", app.port_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="Slave ID").grid(row=0, column=4, padx=5)
-    app.slave_entry = _connection_entry(app, app.brand_frame, "slave_id", 80)
+    ctk.CTkLabel(frame, text="Slave ID").grid(row=0, column=4, padx=5)
+    app.slave_entry = _connection_entry(app, frame, "slave_id", 80)
     app.slave_entry.grid(row=0, column=5, padx=5)
+    _remember_connection_widget(app, "Schneider", "slave_entry", app.slave_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="%M inicial").grid(row=0, column=6, padx=5)
-    app.coil_start_entry = _connection_entry(app, app.brand_frame, "coil_start", 90)
+    ctk.CTkLabel(frame, text="%M inicial").grid(row=0, column=6, padx=5)
+    app.coil_start_entry = _connection_entry(app, frame, "coil_start", 90)
     app.coil_start_entry.grid(row=0, column=7, padx=5)
+    _remember_connection_widget(app, "Schneider", "coil_start_entry", app.coil_start_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="%MW inicial").grid(row=0, column=8, padx=5)
-    app.reg_start_entry = _connection_entry(app, app.brand_frame, "register_start", 90)
+    ctk.CTkLabel(frame, text="%MW inicial").grid(row=0, column=8, padx=5)
+    app.reg_start_entry = _connection_entry(app, frame, "register_start", 90)
     app.reg_start_entry.grid(row=0, column=9, padx=5)
+    _remember_connection_widget(app, "Schneider", "reg_start_entry", app.reg_start_entry)
 
     app.schneider_info = ctk.CTkLabel(
-        app.brand_frame,
+        frame,
         text=SCHNEIDER_MODELS["M221"]["description"],
         text_color="gray"
     )
     app.schneider_info.grid(row=0, column=10, padx=20)
+    _remember_connection_widget(app, "Schneider", "schneider_info", app.schneider_info)
 
 
 def create_modbus_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Modbus TCP")
+    if not created:
+        return
 
-    ctk.CTkLabel(app.brand_frame, text="Porta").grid(
+    ctk.CTkLabel(frame, text="Porta").grid(
         row=0,
         column=0,
         padx=5,
     )
-    app.port_entry = _connection_entry(app, app.brand_frame, "port", 80)
+    app.port_entry = _connection_entry(app, frame, "port", 80)
     app.port_entry.grid(row=0, column=1, padx=5)
+    _remember_connection_widget(app, "Modbus TCP", "port_entry", app.port_entry)
 
-    ctk.CTkLabel(app.brand_frame, text="Slave ID").grid(
+    ctk.CTkLabel(frame, text="Slave ID").grid(
         row=0,
         column=2,
         padx=5,
     )
-    app.slave_entry = _connection_entry(app, app.brand_frame, "slave_id", 80)
+    app.slave_entry = _connection_entry(app, frame, "slave_id", 80)
     app.slave_entry.grid(row=0, column=3, padx=5)
+    _remember_connection_widget(app, "Modbus TCP", "slave_entry", app.slave_entry)
 
     ctk.CTkLabel(
-        app.brand_frame,
+        frame,
         text="Modbus TCP: coils / holding registers",
         text_color="gray",
     ).grid(row=0, column=4, padx=20)
 
 
 def create_rockwell_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Rockwell")
+    if not created:
+        return
     ctk.CTkLabel(
-        app.brand_frame,
+        frame,
         text="Rockwell EtherNet/IP — symbolic tags",
         text_color="gray",
     ).grid(row=0, column=0, padx=20)
 
 
 def create_omron_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Omron")
+    if not created:
+        return
 
     fields = (
         ("FINS Port", "port_entry", "9600"),
@@ -444,28 +486,30 @@ def create_omron_options(app):
     )
     for index, (label, attribute, default) in enumerate(fields):
         column = index * 2
-        ctk.CTkLabel(app.brand_frame, text=label).grid(
+        ctk.CTkLabel(frame, text=label).grid(
             row=0,
             column=column,
             padx=5,
         )
         model_name = {"port_entry": "omron_port", "destination_node_entry": "destination_node", "source_node_entry": "source_node"}[attribute]
-        entry = _connection_entry(app, app.brand_frame, model_name, 90)
+        entry = _connection_entry(app, frame, model_name, 90)
         entry.grid(row=0, column=column + 1, padx=5)
-        setattr(app, attribute, entry)
+        _remember_connection_widget(app, "Omron", attribute, entry)
 
     ctk.CTkLabel(
-        app.brand_frame,
+        frame,
         text="Omron FINS/UDP — CIO bits / DM words",
         text_color="gray",
     ).grid(row=0, column=6, padx=20)
 
 
 def create_simulator_options(app):
-    clear_brand_frame(app)
+    frame, created = _show_connection_frame(app, "Simulator")
     _set_ip_visibility(app, False)
+    if not created:
+        return
     ctk.CTkLabel(
-        app.brand_frame,
+        frame,
         text="Internal PLC Simulator — no network required",
         text_color="gray",
     ).grid(row=0, column=0, padx=20)

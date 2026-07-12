@@ -6,11 +6,11 @@ Regenerate this file with ``scripts/generate_version.py`` during a build.
 import sys
 
 APP_NAME = 'PLC Universal Simulator'
-APP_VERSION = '2.2.2-rc2'
+APP_VERSION = '2.2.2-rc3'
 APP_RELEASE = 'Release Candidate'
-APP_GIT_COMMIT = '9854a6c'
+APP_GIT_COMMIT = 'ed89ade'
 APP_GIT_BRANCH = 'ui-performance-stabilization'
-APP_BUILD_DATE = '2026-07-11 18:08 UTC'
+APP_BUILD_DATE = '2026-07-12 13:27 UTC'
 BUILD_TYPE = 'Source development build'
 
 

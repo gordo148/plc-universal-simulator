@@ -1,7 +1,8 @@
 from types import SimpleNamespace
+import inspect
 
 from core.connection_state import ConnectionState
-from ui import dashboard_tab, main_window, project_config
+from ui import dashboard_tab, header, main_window, project_config
 
 
 class Var:
@@ -68,3 +69,15 @@ def test_connection_restore_updates_model_without_entries():
     app = stale_entries(SimpleNamespace(connection_state=connection_state(), app=None))
     project_config._restore_connection_settings(app, "Siemens", {"rack":"2", "slot":"3", "db_number":"400"})
     assert [app.connection_state.get(key) for key in ("rack","slot","db_number")] == ["2","3","400"]
+
+
+def test_connection_panel_switching_never_destroys_entries():
+    source = inspect.getsource(header.clear_brand_frame)
+    assert "grid_remove" in source
+    assert ".destroy(" not in source
+
+
+def test_persistent_value_change_does_not_touch_previous_entry():
+    app = stale_entries(SimpleNamespace(connection_state=connection_state(), app=None))
+    header.set_connection_value(app, "db_number", "3000")
+    assert app.connection_state.db_number == "3000"
