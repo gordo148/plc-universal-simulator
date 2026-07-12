@@ -23,6 +23,11 @@ class FakeRoot:
     def destroy(self):
         self.destroyed = True
 
+    def lift(self): pass
+    def focus_force(self): pass
+    def attributes(self, *_args): pass
+    def bell(self): pass
+
 
 def scheduler_app():
     root = FakeRoot()
@@ -34,6 +39,10 @@ def scheduler_app():
     app.schedule_job = lambda delay, callback: main_window.PLCSimulator.schedule_job(app, delay, callback)
     app.cancel_job = lambda job: main_window.PLCSimulator.cancel_job(app, job)
     app.cancel_pending_jobs = lambda: main_window.PLCSimulator.cancel_pending_jobs(app)
+    app._shutdown_marker = lambda marker, **details: main_window.PLCSimulator._shutdown_marker(app, marker, **details)
+    app._shutdown_watchdog = lambda: main_window.PLCSimulator._shutdown_watchdog(app)
+    app._log_shutdown_threads = lambda location: main_window.PLCSimulator._log_shutdown_threads(app, location)
+    app._log_shutdown_ui_diagnostics = lambda: main_window.PLCSimulator._log_shutdown_ui_diagnostics(app)
     return app
 
 
@@ -168,6 +177,22 @@ def test_clean_close_does_not_auto_save_project():
     assert app.app.destroyed is True
 
 
+def test_navigation_only_ui_state_does_not_mark_project_dirty(monkeypatch):
+    saved = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    current = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Trends"}}}
+    app = SimpleNamespace(_project_dirty=False, _saved_project_snapshot=saved)
+    monkeypatch.setattr(main_window, "build_project_data", lambda _app: current)
+    assert main_window.PLCSimulator.has_unsaved_changes(app) is False
+
+
+def test_project_content_change_still_marks_project_dirty(monkeypatch):
+    saved = {"tags": [{"name": "A"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    current = {"tags": [{"name": "B"}], "runtime_settings": {"ui_state": {"selected_tab": "Dashboard"}}}
+    app = SimpleNamespace(_project_dirty=False, _saved_project_snapshot=saved)
+    monkeypatch.setattr(main_window, "build_project_data", lambda _app: current)
+    assert main_window.PLCSimulator.has_unsaved_changes(app) is True
+
+
 def test_dirty_close_profiles_confirmation_separately(monkeypatch):
     app = scheduler_app()
     app.has_unsaved_changes = lambda: True
@@ -177,7 +202,7 @@ def test_dirty_close_profiles_confirmation_separately(monkeypatch):
     app.cancel_pending_tab_refreshes = lambda: None
     app.plc_service = SimpleNamespace(disconnect=lambda: None)
     app._save_settings = lambda: None
-    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *_args: True)
+    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *_args, **_kwargs: True)
 
     main_window.PLCSimulator.on_close(app)
 

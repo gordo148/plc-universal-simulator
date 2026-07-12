@@ -66,10 +66,16 @@ def test_invalid_saved_preferences_are_sanitized(tmp_path):
 def test_close_is_cancelled_when_unsaved_changes_are_not_discarded(monkeypatch):
     destroyed = []
     simulator = object.__new__(PLCSimulator)
-    simulator.app = type("Window", (), {"destroy": lambda self: destroyed.append(True)})()
+    simulator.app = type("Window", (), {
+        "destroy": lambda self: destroyed.append(True),
+        "lift": lambda self: None,
+        "focus_force": lambda self: None,
+        "attributes": lambda self, *_args: None,
+        "bell": lambda self: None,
+    })()
     simulator.has_unsaved_changes = lambda: True
     simulator._save_settings = lambda: None
-    monkeypatch.setattr("ui.main_window.messagebox.askyesno", lambda *_args: False)
+    monkeypatch.setattr("ui.main_window.messagebox.askyesno", lambda *_args, **_kwargs: False)
 
     simulator.on_close()
 

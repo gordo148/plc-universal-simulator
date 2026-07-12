@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 import inspect
+import threading
+import time
 
 from core.connection_state import ConnectionState
 from ui import dashboard_tab, header, main_window, project_config
@@ -37,9 +39,22 @@ def test_dashboard_connection_summary_uses_persistent_state():
 def test_connect_uses_persistent_siemens_values(monkeypatch):
     calls = []
     service = SimpleNamespace(connect=lambda *args, **kwargs: calls.append((args, kwargs)) or True)
-    app = stale_entries(SimpleNamespace(connection_state=connection_state(), _connection_ui_rebuilding=False, plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), cyclic_read_enabled=False, start_cyclic_read=lambda: None))
+    app = stale_entries(SimpleNamespace(connection_state=connection_state(), _connection_ui_rebuilding=False, plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), cyclic_read_enabled=False, start_cyclic_read=lambda: None, schedule_job=lambda *_args: None))
     main_window.PLCSimulator.connect(app)
+    app.connection_thread.join(timeout=1)
     assert calls == [(('Siemens', '192.168.0.84'), {'rack':'0', 'slot':'1', 'db_number':'2000'})]
+
+
+def test_blocking_driver_connect_does_not_block_tk_caller():
+    release = threading.Event()
+    service = SimpleNamespace(connect=lambda *_a, **_k: release.wait(5))
+    app = SimpleNamespace(connection_state=connection_state(), _connection_ui_rebuilding=False, plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), schedule_job=lambda *_args: None)
+    started = time.perf_counter()
+    main_window.PLCSimulator.connect(app)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.1
+    assert app.connection_thread.daemon is True
+    release.set(); app.connection_thread.join(timeout=1)
 
 
 def test_project_snapshot_uses_persistent_state(project_app):
