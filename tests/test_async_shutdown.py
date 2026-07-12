@@ -70,6 +70,27 @@ def test_delayed_callback_is_noop_after_shutdown_starts():
     assert calls == []
 
 
+def test_shutdown_thread_audit_includes_current_frame_and_stack(caplog):
+    app = scheduler_app()
+
+    with caplog.at_level("WARNING"):
+        app._log_shutdown_threads("test")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "SHUTDOWN THREAD" in message
+        and "name=MainThread" in message
+        and "daemon=False" in message
+        and "current_frame=" in message
+        for message in messages
+    )
+    assert any(
+        "SHUTDOWN THREAD STACK name=MainThread" in message
+        and "test_shutdown_thread_audit_includes_current_frame_and_stack" in message
+        for message in messages
+    )
+
+
 def test_close_immediately_after_import_cancels_jobs_before_destroy():
     app = scheduler_app()
     app.schedule_job(1, lambda: None)  # import/Tag Manager continuation

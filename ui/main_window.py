@@ -7,6 +7,7 @@ import faulthandler
 import queue
 import threading
 import time
+import traceback
 from pathlib import Path
 from tkinter import PhotoImage, TclError, messagebox
 
@@ -1125,15 +1126,29 @@ class PLCSimulator:
         )
 
     def _log_shutdown_threads(self, location):
+        current_frames = sys._current_frames()
         for thread in threading.enumerate():
+            frame = current_frames.get(thread.ident)
+            if frame is None:
+                current_frame = "<no Python frame>"
+                stack = current_frame
+            else:
+                current_frame = (
+                    f"{frame.f_code.co_filename}:{frame.f_lineno} "
+                    f"in {frame.f_code.co_name}"
+                )
+                stack = "".join(traceback.format_stack(frame)).rstrip()
             self._shutdown_marker(
                 "SHUTDOWN THREAD",
                 location=location,
                 name=thread.name,
                 daemon=thread.daemon,
                 alive=thread.is_alive(),
-                thread=repr(thread),
+                current_frame=current_frame,
             )
+            LOGGER.warning("SHUTDOWN THREAD STACK name=%s\n%s", thread.name, stack)
+        for handler in logging.getLogger().handlers:
+            handler.flush()
 
     def _log_shutdown_ui_diagnostics(self):
         table = getattr(self, "trend_table", None)
