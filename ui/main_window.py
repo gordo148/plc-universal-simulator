@@ -21,7 +21,9 @@ from core.version import (
 from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
 
-from ui.header import create_header, SCHNEIDER_MODELS
+from ui.header import (
+    create_header, SCHNEIDER_MODELS, connection_value, set_connection_value,
+)
 from ui.digital_tab import (
     cancel_digital_refresh,
     create_digital_tab,
@@ -182,8 +184,7 @@ class PLCSimulator:
 
         self.create_header()
         self.create_tabs()
-        self.ip_entry.delete(0, "end")
-        self.ip_entry.insert(0, self.settings.ip_address)
+        set_connection_value(self, "ip", self.settings.ip_address)
         self.brand_menu.set(self.settings.plc_brand)
         self.update_brand(self.settings.plc_brand)
         self.refresh_recent_projects()
@@ -356,7 +357,9 @@ class PLCSimulator:
         pid_run_loop(self)
 
     def connect(self):
-        ip = self.ip_entry.get().strip()
+        if getattr(self, "_connection_ui_rebuilding", False):
+            return
+        ip = connection_value(self, "ip").strip()
         brand = self.brand_menu.get()
 
         try:
@@ -366,24 +369,24 @@ class PLCSimulator:
                 result = self.plc_service.connect(
                     brand,
                     ip,
-                    rack=self.rack_entry.get(),
-                    slot=self.slot_entry.get(),
-                    db_number=self.db_entry.get(),
+                    rack=connection_value(self, "rack"),
+                    slot=connection_value(self, "slot"),
+                    db_number=connection_value(self, "db_number"),
                 )
             elif brand in ("Schneider", "Modbus TCP"):
                 result = self.plc_service.connect(
                     brand,
                     ip,
-                    port=self.port_entry.get(),
-                    slave_id=self.slave_entry.get(),
+                    port=connection_value(self, "port"),
+                    slave_id=connection_value(self, "slave_id"),
                 )
             elif brand == "Omron":
                 result = self.plc_service.connect(
                     brand,
                     ip,
-                    port=self.port_entry.get(),
-                    destination_node=self.destination_node_entry.get(),
-                    source_node=self.source_node_entry.get(),
+                    port=connection_value(self, "omron_port"),
+                    destination_node=connection_value(self, "destination_node"),
+                    source_node=connection_value(self, "source_node"),
                 )
             else:
                 result = self.plc_service.connect(brand, ip)
@@ -436,20 +439,25 @@ class PLCSimulator:
         return self.plc_service.is_connected()
 
     def update_brand(self, value):
-        self.disconnect()
-
-        if value == "Siemens":
-            self.create_siemens_options()
-        elif value == "Schneider":
-            self.create_schneider_options()
-        elif value == "Modbus TCP":
-            self.create_modbus_options()
-        elif value == "Rockwell":
-            self.create_rockwell_options()
-        elif value == "Omron":
-            self.create_omron_options()
-        else:
-            self.create_simulator_options()
+        if getattr(self, "_connection_ui_rebuilding", False):
+            return
+        self._connection_ui_rebuilding = True
+        try:
+            self.disconnect()
+            if value == "Siemens":
+                self.create_siemens_options()
+            elif value == "Schneider":
+                self.create_schneider_options()
+            elif value == "Modbus TCP":
+                self.create_modbus_options()
+            elif value == "Rockwell":
+                self.create_rockwell_options()
+            elif value == "Omron":
+                self.create_omron_options()
+            else:
+                self.create_simulator_options()
+        finally:
+            self._connection_ui_rebuilding = False
 
         if hasattr(self, "tag_import_tia_csv_button"):
             update_csv_button_visibility(self)
@@ -930,7 +938,7 @@ class PLCSimulator:
 
     def _save_settings(self):
         self.settings.plc_brand = self.brand_menu.get()
-        self.settings.ip_address = self.ip_entry.get()
+        self.settings.ip_address = connection_value(self, "ip")
         size = self.app.geometry().split("+", 1)[0]
         if "x" in size:
             self.settings.window_size = size
@@ -984,6 +992,9 @@ class PLCSimulator:
         def stop_profiles():
             self.pid_running = False
             if hasattr(self, "trend_running"): self.trend_running = False
+            if getattr(self, "_trend_initialized", False):
+                from ui.trend_tab import cancel_trend_callbacks
+                cancel_trend_callbacks(self)
             for index in tuple(self.analog_profile_running):
                 self.analog_profile_running[index] = False
         phase("stop_profiles_and_trends", stop_profiles)

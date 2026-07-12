@@ -1,4 +1,4 @@
-# Digital and Analog UI performance
+# Digital, Analog, and Trends UI performance
 
 ## Test environment
 
@@ -82,3 +82,28 @@ xvfb-run -a dist/stress-test-ui/stress-test-ui --output /tmp/ui-packaged.json
 - Treeview refresh currently validates/filters the full tag list, so 5,000-tag page changes rise to about 12–15 ms. This remains below budget.
 - Measurements are single-run and Xvfb does not include a desktop compositor.
 - The CSV timing covers parsing and validation, not time spent choosing a file in the native file dialog.
+
+## Trends master-detail results
+
+The former Trends selector created one `CTkCheckBox` and `BooleanVar` per
+trend-enabled tag. A measured 1,000-tag case took about 46.5 seconds to create
+and 0.84–1.36 seconds to shut down; profiling attributed 2.69 seconds of a
+loaded teardown run to 1,001 checkbox destructors.
+
+The replacement has a fixed 88-CTk-widget structure, zero per-tag Tk variables,
+one bounded Treeview page, one editor, and one persistent chart. Conservative
+Xvfb measurements with `tracemalloc` enabled were:
+
+| Tags | Search ms | Filter ms | Selection ms | Values ms | Shutdown ms | CTk widgets |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 56.2 | 73.5 | 53.8 | 6.0 | 199.9 | 88 |
+| 1,000 | 62.2 | 81.0 | 53.8 | 9.0 | 350.1 | 88 |
+| 5,000 | 91.8 | 77.5 | 13.0 | 8.9 | 448.1 | 88 |
+
+Tree insertion is bounded by the selected page size, and the fixed widget count
+removes tag-count-proportional shutdown behavior.
+
+```bash
+xvfb-run -a python scripts/benchmark_trends_ui.py \
+  --counts 100 1000 5000 --output /tmp/trends-ui.json
+```

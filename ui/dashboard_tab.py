@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 from core.version import APP_VERSION
+from ui.header import connection_value
 from ui.table_utils import debounce, filter_tags, sort_tags
 from ui.tag_manager import get_dashboard_tags
 
@@ -43,7 +44,7 @@ def dashboard_alarm_summary(app):
 
 def dashboard_summary_values(app):
     counts=dashboard_counts(app); connected=app.plc_service.is_connected(); brand=app.brand_menu.get(); diagnostics=app.plc_service.diagnostics_snapshot()
-    project=os.path.basename(getattr(app,"project_path","") or "No project"); endpoint="Internal Simulator" if brand=="Simulator" else app.ip_entry.get()
+    project=os.path.basename(getattr(app,"project_path","") or "No project"); endpoint="Internal Simulator" if brand=="Simulator" else connection_value(app,"ip")
     return {"PLC":("ONLINE" if connected else "OFFLINE", "green" if connected else "red"),"Brand":(brand,"neutral"),"Endpoint":(endpoint,"cyan"),"Project":(project,"neutral"),"Tags":(counts["total"],"neutral"),"Simulation":(counts["simulation"],"amber"),"Trends":(counts["trends"],"cyan"),"Alarms":(counts["alarms"],"amber"),"Dashboard":(counts["dashboard"],"cyan"),"Communication":("HEALTHY" if connected and not diagnostics["read_error_count"] else ("INACTIVE" if not connected else "DEGRADED"),"green" if connected and not diagnostics["read_error_count"] else ("neutral" if not connected else "amber")),"Last read":(_fmt_time(diagnostics["last_read_timestamp"]),"neutral"),"Read cycle":(f"{diagnostics['last_read_duration_ms']:.1f} ms","cyan")}
 
 
@@ -253,7 +254,7 @@ def update_dashboard(app, last_message=None):
     values=dashboard_summary_values(app); connected=app.plc_service.is_connected(); brand=app.brand_menu.get(); diagnostics=app.plc_service.diagnostics_snapshot(); project=os.path.basename(getattr(app,"project_path","") or "No project")
     for title,(value,color) in values.items(): app.dashboard_cards[title].configure(text=str(value),text_color=COLORS[color])
     refresh_dashboard_table(app)
-    alarm=dashboard_alarm_summary(app); trend_data=getattr(app,"trend_data",{"time":[],"tags":{}}); selected_trends=sum(v.get() for v in getattr(app,"trend_tag_vars",{}).values()) if hasattr(app,"trend_tag_vars") else 0
+    alarm=dashboard_alarm_summary(app); trend_data=getattr(app,"trend_data",{"time":[],"tags":{}}); selected_trends=len(getattr(app,"trend_visible_tags",set())) if hasattr(app,"trend_visible_tags") else sum(v.get() for v in getattr(app,"trend_tag_vars",{}).values()) if hasattr(app,"trend_tag_vars") else 0
     app.dashboard_panel_labels["Communication"].configure(text=f"Driver: {diagnostics['brand'] or 'None'} · {'Connected' if connected else 'Disconnected'}\nReads: {diagnostics['read_success_count']} ok / {diagnostics['read_error_count']} err · avg {diagnostics['average_read_duration_ms']:.1f} ms · {_fmt_time(diagnostics['last_read_timestamp'])}\nWrites: {diagnostics['write_success_count']} ok / {diagnostics['write_error_count']} err · avg {diagnostics['average_write_duration_ms']:.1f} ms · {_fmt_time(diagnostics['last_write_timestamp'])}\nReconnects: {diagnostics['reconnect_count']}")
     app.dashboard_panel_labels["Alarms"].configure(text=f"Active: {alarm['active']} · Unack: {alarm['unacknowledged']} · High priority: {alarm['high_priority']}\nLatest: {alarm['latest'].get('source') if alarm['latest'] else 'None'} · Cleared: {alarm['latest_cleared'] or 'None'}")
     trend_times=trend_data.get('time',[]); latest_sample=_fmt_time(getattr(app,'trend_start_time',0)+(trend_times[-1] if trend_times else 0)) if trend_times else "Never"
@@ -272,8 +273,8 @@ def _fmt_time(timestamp): return time.strftime("%H:%M:%S",time.localtime(timesta
 def _connection_summary(app,brand):
     if brand=="Simulator":return "Internal Simulator"
     if brand=="Siemens":
-        return f"{app.ip_entry.get()} · Rack {app.rack_entry.get()} Slot {app.slot_entry.get()} DB {app.db_entry.get()}"
-    return f"{app.ip_entry.get()} · {brand}"
+        return f"{connection_value(app,'ip')} · Rack {connection_value(app,'rack')} Slot {connection_value(app,'slot')} DB {connection_value(app,'db_number')}"
+    return f"{connection_value(app,'ip')} · {brand}"
 
 
 def record_dashboard_event(app, message, severity="INFO", detail=""):

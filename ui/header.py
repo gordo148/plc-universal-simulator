@@ -1,6 +1,7 @@
 import os
 
 import customtkinter as ctk
+from tkinter import TclError
 
 SCHNEIDER_MODELS = {
     "M221": {"coil_start": 0, "reg_start": 0, "description": "M221 / Machine Expert Basic"},
@@ -18,8 +19,68 @@ COLOR_ONLINE = "#21c55d"
 COLOR_OFFLINE = "#ef4444"
 COLOR_WARNING = "#f59e0b"
 
+CONNECTION_DEFAULTS = {
+    "ip": "192.168.1.10", "rack": "0", "slot": "1", "db_number": "100",
+    "port": "502", "slave_id": "1", "coil_start": "0", "register_start": "0",
+    "omron_port": "9600", "destination_node": "0", "source_node": "1",
+}
+
+
+def ensure_connection_state(app):
+    """Create persistent connection state independent of disposable entries."""
+    if hasattr(app, "connection_vars"):
+        return
+    app.connection_vars = {
+        name: ctk.StringVar(master=app.app, value=value)
+        for name, value in CONNECTION_DEFAULTS.items()
+    }
+    app.connection_settings = app.connection_vars
+    app.ip_var = app.connection_vars["ip"]
+    app.rack_var = app.connection_vars["rack"]
+    app.slot_var = app.connection_vars["slot"]
+    app.db_var = app.connection_vars["db_number"]
+
+
+def connection_value(app, name, default=""):
+    variable = getattr(app, "connection_vars", {}).get(name)
+    if variable is None:
+        attribute = {
+            "ip": "ip_entry", "rack": "rack_entry", "slot": "slot_entry",
+            "db_number": "db_entry", "port": "port_entry", "omron_port": "port_entry",
+            "slave_id": "slave_entry", "coil_start": "coil_start_entry",
+            "register_start": "reg_start_entry", "destination_node": "destination_node_entry",
+            "source_node": "source_node_entry",
+        }.get(name)
+        widget = getattr(app, attribute, None) if attribute else None
+        try:
+            return str(widget.get()) if widget is not None else CONNECTION_DEFAULTS.get(name, default)
+        except Exception:
+            return CONNECTION_DEFAULTS.get(name, default)
+    try:
+        return str(variable.get())
+    except Exception:
+        return CONNECTION_DEFAULTS.get(name, default)
+
+
+def set_connection_value(app, name, value):
+    ensure_connection_state(app)
+    app.connection_vars[name].set(str(value))
+
+
+def _connection_entry(app, parent, name, width):
+    ensure_connection_state(app)
+    return ctk.CTkEntry(parent, width=width, textvariable=app.connection_vars[name])
+
+
+def widget_exists(widget):
+    try:
+        return widget is not None and bool(widget.winfo_exists())
+    except TclError:
+        return False
+
 
 def create_header(app):
+    ensure_connection_state(app)
     app.top_status_bar = ctk.CTkFrame(
         app.app,
         height=48,
@@ -73,8 +134,7 @@ def create_header(app):
 
     app.ip_label = ctk.CTkLabel(app.header, text="IP")
     app.ip_label.grid(row=0, column=2, padx=5)
-    app.ip_entry = ctk.CTkEntry(app.header, width=140)
-    app.ip_entry.insert(0, "192.168.1.10")
+    app.ip_entry = _connection_entry(app, app.header, "ip", 140)
     app.ip_entry.grid(row=0, column=3, padx=5)
 
     ctk.CTkButton(app.header, text="Ligar", command=app.connect, width=80).grid(row=0, column=4, padx=4)
@@ -190,7 +250,7 @@ def update_top_status_bar(app):
     if app.brand_menu.get() == "Simulator":
         app.top_ip.configure(text="INTERNAL")
     else:
-        app.top_ip.configure(text=app.ip_entry.get() or "—")
+        app.top_ip.configure(text=connection_value(app, "ip") or "—")
 
     connected = app.plc_service.is_connected()
     simulator_online = connected and app.brand_menu.get() == "Simulator"
@@ -258,7 +318,11 @@ def hide_alarm_banner(app):
 
 def clear_brand_frame(app):
     _set_ip_visibility(app, True)
-    for widget in app.brand_frame.winfo_children():
+    children = tuple(app.brand_frame.winfo_children())
+    for attribute, value in tuple(vars(app).items()):
+        if value in children:
+            setattr(app, attribute, None)
+    for widget in children:
         widget.destroy()
 
 
@@ -275,18 +339,15 @@ def create_siemens_options(app):
     clear_brand_frame(app)
 
     ctk.CTkLabel(app.brand_frame, text="Rack").grid(row=0, column=0, padx=5)
-    app.rack_entry = ctk.CTkEntry(app.brand_frame, width=70)
-    app.rack_entry.insert(0, "0")
+    app.rack_entry = _connection_entry(app, app.brand_frame, "rack", 70)
     app.rack_entry.grid(row=0, column=1, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Slot").grid(row=0, column=2, padx=5)
-    app.slot_entry = ctk.CTkEntry(app.brand_frame, width=70)
-    app.slot_entry.insert(0, "1")
+    app.slot_entry = _connection_entry(app, app.brand_frame, "slot", 70)
     app.slot_entry.grid(row=0, column=3, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="DB").grid(row=0, column=4, padx=5)
-    app.db_entry = ctk.CTkEntry(app.brand_frame, width=80)
-    app.db_entry.insert(0, "100")
+    app.db_entry = _connection_entry(app, app.brand_frame, "db_number", 80)
     app.db_entry.grid(row=0, column=5, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Siemens: DBX / DBW", text_color="gray").grid(row=0, column=6, padx=20)
@@ -305,23 +366,19 @@ def create_schneider_options(app):
     app.schneider_model_menu.grid(row=0, column=1, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Porta").grid(row=0, column=2, padx=5)
-    app.port_entry = ctk.CTkEntry(app.brand_frame, width=80)
-    app.port_entry.insert(0, "502")
+    app.port_entry = _connection_entry(app, app.brand_frame, "port", 80)
     app.port_entry.grid(row=0, column=3, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Slave ID").grid(row=0, column=4, padx=5)
-    app.slave_entry = ctk.CTkEntry(app.brand_frame, width=80)
-    app.slave_entry.insert(0, "1")
+    app.slave_entry = _connection_entry(app, app.brand_frame, "slave_id", 80)
     app.slave_entry.grid(row=0, column=5, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="%M inicial").grid(row=0, column=6, padx=5)
-    app.coil_start_entry = ctk.CTkEntry(app.brand_frame, width=90)
-    app.coil_start_entry.insert(0, "0")
+    app.coil_start_entry = _connection_entry(app, app.brand_frame, "coil_start", 90)
     app.coil_start_entry.grid(row=0, column=7, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="%MW inicial").grid(row=0, column=8, padx=5)
-    app.reg_start_entry = ctk.CTkEntry(app.brand_frame, width=90)
-    app.reg_start_entry.insert(0, "0")
+    app.reg_start_entry = _connection_entry(app, app.brand_frame, "register_start", 90)
     app.reg_start_entry.grid(row=0, column=9, padx=5)
 
     app.schneider_info = ctk.CTkLabel(
@@ -340,8 +397,7 @@ def create_modbus_options(app):
         column=0,
         padx=5,
     )
-    app.port_entry = ctk.CTkEntry(app.brand_frame, width=80)
-    app.port_entry.insert(0, "502")
+    app.port_entry = _connection_entry(app, app.brand_frame, "port", 80)
     app.port_entry.grid(row=0, column=1, padx=5)
 
     ctk.CTkLabel(app.brand_frame, text="Slave ID").grid(
@@ -349,8 +405,7 @@ def create_modbus_options(app):
         column=2,
         padx=5,
     )
-    app.slave_entry = ctk.CTkEntry(app.brand_frame, width=80)
-    app.slave_entry.insert(0, "1")
+    app.slave_entry = _connection_entry(app, app.brand_frame, "slave_id", 80)
     app.slave_entry.grid(row=0, column=3, padx=5)
 
     ctk.CTkLabel(
@@ -384,8 +439,8 @@ def create_omron_options(app):
             column=column,
             padx=5,
         )
-        entry = ctk.CTkEntry(app.brand_frame, width=90)
-        entry.insert(0, default)
+        model_name = {"port_entry": "omron_port", "destination_node_entry": "destination_node", "source_node_entry": "source_node"}[attribute]
+        entry = _connection_entry(app, app.brand_frame, model_name, 90)
         entry.grid(row=0, column=column + 1, padx=5)
         setattr(app, attribute, entry)
 

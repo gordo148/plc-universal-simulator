@@ -183,6 +183,19 @@ and Trend state, active simulation timers, project status, navigation, Trend
 start/stop, simulation stop, and project save actions. Recent meaningful events
 are kept in a bounded in-memory list. See [Dashboard documentation](docs/DASHBOARD.md).
 
+## Scalable Trends
+
+The Trends tab uses the same master-detail approach as the Digital and Analog
+tabs. A searchable, sortable, paged `ttk.Treeview` lists tags on the left, and
+one reusable editor controls the selected tag on the right. The chart and
+toolbar remain persistent during selection, search, filtering, and paging.
+
+Search matches name, address, and data type while typing. Filters cover enabled
+state, BOOL/INT/REAL, and visible/hidden curves. Space or Enter toggles the
+selected tag; Delete removes it; Ctrl+F focuses search; Escape clears search.
+Right-click provides enable, disable, show, hide, and copy commands. See
+[Trends documentation](docs/TRENDS.md).
+
 The Tag Manager is the source of truth. Deleting or changing a tag affects all
 runtime consumers generated from that tag database.
 
