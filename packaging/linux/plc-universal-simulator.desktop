@@ -4,5 +4,6 @@ Name=PLC Universal Simulator
 Comment=Industrial PLC testing and simulation tool
 Exec=plc-universal-simulator
 Icon=plc-universal-simulator
+StartupWMClass=plc-universal-simulator
 Terminal=false
 Categories=Development;Engineering;

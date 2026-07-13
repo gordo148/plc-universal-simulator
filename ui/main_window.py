@@ -13,6 +13,7 @@ from tkinter import PhotoImage, TclError, messagebox
 
 import customtkinter as ctk
 
+from core.application_identity import APPLICATION_ID
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 from core.version import (
     APP_BUILD_DATE,
@@ -97,7 +98,7 @@ AVAILABLE_PLC_DRIVERS = (
 def get_application_icon_path():
     """Return the application icon path for source and packaged builds."""
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent))
-    return bundle_root / "assets" / "icon.png"
+    return (bundle_root / "assets" / "icon.png").resolve()
 
 
 def get_about_text():
@@ -180,7 +181,10 @@ class PLCSimulator:
         self.pid_last_error = 0.0
         self.pid_last_time = time.time()
 
-        self.app = ctk.CTk()
+        # Tk establishes WM_CLASS while creating the root.  Passing className
+        # here ensures GNOME can associate the window with our desktop file
+        # before the root is mapped and before child widgets are created.
+        self.app = ctk.CTk(className=APPLICATION_ID)
         self._set_application_icon()
         self.app.report_callback_exception = self._report_callback_exception
         self.app.title(f"{APP_NAME} v{APP_VERSION}")
@@ -239,7 +243,8 @@ class PLCSimulator:
 
     def _set_application_icon(self):
         try:
-            self._application_icon = PhotoImage(file=get_application_icon_path())
+            icon_path = str(get_application_icon_path())
+            self._application_icon = PhotoImage(file=icon_path)
             self.app.iconphoto(True, self._application_icon)
         except (OSError, TclError):
             LOGGER.warning("Unable to set application icon", exc_info=True)

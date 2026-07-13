@@ -6,7 +6,9 @@ PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/dist/plc-universal-simulator"
 APPLICATION_DIR="${HOME}/.local/share/plc-universal-simulator"
 BIN_DIR="${HOME}/.local/bin"
-ICON_DIR="${HOME}/.local/share/icons"
+ICON_THEME_DIR="${HOME}/.local/share/icons/hicolor"
+ICON_DIR="${ICON_THEME_DIR}/256x256/apps"
+LEGACY_ICON="${HOME}/.local/share/icons/plc-universal-simulator.png"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 
 if [[ ! -x "${BUILD_DIR}/plc-universal-simulator" ]]; then
@@ -22,9 +24,14 @@ ln -sfn \
 install -m 0644 \
     "${PROJECT_ROOT}/assets/icon.png" \
     "${ICON_DIR}/plc-universal-simulator.png"
+rm -f -- "${LEGACY_ICON}"
 install -m 0644 \
     "${PROJECT_ROOT}/packaging/linux/plc-universal-simulator.desktop" \
     "${DESKTOP_DIR}/plc-universal-simulator.desktop"
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache --force --ignore-theme-index "${ICON_THEME_DIR}"
+fi
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "${DESKTOP_DIR}"
