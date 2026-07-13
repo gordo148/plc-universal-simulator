@@ -1,61 +1,45 @@
 # Changelog
 
-This project uses milestone labels for the v2 release line.
+All notable changes to this project will be documented in this file.
 
-## v2.2-extensible
+## [Unreleased]
+
+## [2.2.4] - 2026-07-13
 
 ### Added
 
-- Internal PLC Simulator driver with volatile `BOOL`, `INT`, and `REAL` memory
-- Simulator online mode with no network configuration
-- Opt-in plugin package and minimal loader skeleton
-- Linux one-folder PyInstaller specification and build scripts
-- Packaging and extensibility documentation
-- Automated tests for the simulator, plugin loader, and packaging foundations
+- Added master-detail Digital and Analog tabs with paginated tag tables and reusable editors.
+- Added a master-detail Trends workspace with search, filters, sorting, reusable editing controls, and a persistent chart.
+- Added a redesigned Dashboard with runtime summaries, communication diagnostics, searchable tags, selected-tag details, and recent events.
+- Added debounced live search to Tag Manager.
+- Added repeatable UI stress, Trends benchmark, shutdown profiling, and shutdown integration tools.
 
 ### Changed
 
-- Updated project metadata and documentation for all implemented PLC drivers
-- Preserved Internal Simulator values for the application session
-- Kept runtime values outside `.simproject` persistence
-- Made the Omron FINS dependency optional at application startup
+- Decoupled persistent PLC connection state from Tk widgets so projects and connection settings survive UI rebuilds.
+- Changed Siemens DB polling to validated, compact, size-limited read ranges instead of reading one span through the highest address.
+- Moved PLC connection attempts off the Tk event thread.
+- Added automatic source and packaged-build version metadata generation.
 
-## v2.1-industrial-drivers
+### Fixed
 
-### Added
+- Fixed shutdown hangs caused by blocked PLC connections, pending UI callbacks, and tag-count-proportional Trends teardown.
+- Fixed stale or destroyed connection widgets during PLC brand switching and application shutdown.
+- Fixed Siemens DB address validation and failure isolation so affected ranges are invalidated without discarding successful ranges.
+- Fixed project serialization and Dashboard connection handling after repeated PLC brand changes.
 
-- Generic Modbus TCP driver with coils and holding-register support
-- Rockwell EtherNet/IP symbolic-tag driver using pycomm3
-- Omron FINS/UDP driver for CIO bits and DM words
-- Brand-specific connection controls, validation, and address suggestions
-- Project persistence for industrial-driver connection settings
-- Mocked read/write routing tests requiring no PLC hardware
+### Performance
 
-### Supported addressing
+- Replaced per-tag Digital, Analog, and Trends controls with fixed-size master-detail interfaces that scale to thousands of tags.
+- Bounded table insertion and refresh work with pagination, filtering, and reusable editors.
+- Avoided rebuilding unchanged Dashboard structures during polling.
 
-- Siemens: `DBX`, `DBW`, and `DBD`
-- Schneider: `%M` and `%MW`
-- Generic Modbus TCP: prefixed or numeric coil/register addresses
-- Rockwell: symbolic tag names
-- Omron: CIO bits and DM words/double words
+### Linux
 
-## v2.0-beta
+- Added a canonical application identity and matching `WM_CLASS`/`StartupWMClass` for correct GNOME dock grouping and icons.
+- Improved build metadata generation, PyInstaller module collection, icon-theme installation, cache refresh, and uninstall cleanup.
 
-### Added
+### Testing
 
-- Universal Tag Manager as the shared tag database
-- Central Runtime Cache with value validity, timestamps, and source tracking
-- PLCService boundary for driver communication
-- Siemens S7 and Schneider Modbus drivers
-- Digital and analog simulation controls
-- Feedback monitor, dashboard, trends, alarms, and PID
-- Universal, Siemens TIA, and Schneider CSV import workflows
-- Universal CSV export
-- Atomic `.simproject` save/load with validation and rollback
-- Headless pytest framework
-
-### Architecture
-
-- Separated persistent tag definitions from volatile runtime values
-- Routed runtime consumers through the shared Tag Manager and Runtime Cache
-- Kept PLC drivers independent from UI modules
+- Expanded automated coverage for master-detail tabs, pagination, Dashboard, Trends, Tag Manager search, persistent connection state, Linux packaging, version generation, and shutdown behavior.
+- Added source and packaged shutdown integration scenarios plus large-project UI benchmarks.
