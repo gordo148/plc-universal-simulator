@@ -3,7 +3,15 @@ import time
 
 import customtkinter as ctk
 from tkinter import Menu, ttk
-from ui.analog_profiles import start_profile, stop_profile
+from ui.analog_profiles import (
+    canonical_analog_profile,
+    editor_configuration,
+    ensure_dynamic_analog_profiles,
+    ensure_analog_simulation_manager,
+    start_profile,
+    stop_profile,
+    update_canonical_analog_profile,
+)
 from ui.scrollable_frame import widget_exists
 from core.tag_runtime import RuntimeValueSource
 from ui.table_utils import (
@@ -42,6 +50,16 @@ def create_analog_tab_structure(app):
         controls, text="Next", width=90, command=lambda: change_analog_page(app, 1)
     )
     app.analog_next_button.pack(side="left", padx=5)
+    app.analog_start_all_button = ctk.CTkButton(
+        controls, text="Start All", width=90,
+        command=lambda: start_all_analog_simulations(app),
+    )
+    app.analog_start_all_button.pack(side="left", padx=(12, 5))
+    app.analog_stop_all_button = ctk.CTkButton(
+        controls, text="Stop All", width=90,
+        command=lambda: stop_all_analog_simulations(app),
+    )
+    app.analog_stop_all_button.pack(side="left", padx=5)
     app.analog_loading_label = ctk.CTkLabel(controls, text="Analog signals not loaded")
     app.analog_loading_label.pack(side="left", padx=15)
     app.analog_page = 0
@@ -52,6 +70,11 @@ def create_analog_tab_structure(app):
     app._analog_sort_descending = False
     app._analog_last_values = {}
     app._analog_highlight_jobs = {}
+    app.refresh_analog_simulation_status = (
+        lambda tag_name, error=False: refresh_analog_simulation_status(
+            app, tag_name, error=error
+        )
+    )
     app._analog_structure_initialized = True
     _create_analog_master_detail(app)
     LOGGER.info(
@@ -96,6 +119,7 @@ def _create_analog_master_detail(app):
     app.analog_editor = editor_row
     app.analog_row_pool = [editor_row]
     app._analog_table_tags = []
+    app._analog_table_items_by_name = {}
     app._analog_selected_tag_name = None
     for widget, text in ((editor_row["slider"], "Set the selected analog simulation value."), (editor_row["numeric_entry"], "Enter an exact numeric value."), (editor_row["profile_mode"], "Select Manual, Ramp, Random, or Step simulation mode."), (editor_row["step_entry"], "Amount added or removed on each profile cycle."), (editor_row["interval_entry"], "Time between profile updates in milliseconds."), (editor_row["live"], "Latest runtime value.")):
         ToolTip(widget, text)
@@ -174,11 +198,11 @@ def _bind_selected_analog(app):
         return
     tag = app._analog_table_tags[position]
     selection_changed = getattr(app, "_analog_selected_tag_name", None) != tag.name or not app.analog_tags
-    app._analog_selected_tag_name = tag.name
     if selection_changed:
+        _cache_selected_analog_configuration(app)
+        app._analog_selected_tag_name = tag.name
         app.analog_controls[:] = []
         app.analog_tags[:] = []
-        app.analog_profile_directions.clear()
         bind_analog_row(app, app.analog_editor, 0, tag)
         app.analog_controls.append(app.analog_editor)
         app.analog_tags.append(tag)
@@ -258,7 +282,6 @@ def refresh_analog_visible_rows(app, reset_page=False):
             return
         app.analog_controls[:] = []
         app.analog_tags[:] = []
-        app.analog_profile_directions.clear()
         for local_index, row in enumerate(app.analog_row_pool):
             if local_index < len(page_tags):
                 bind_analog_row(app, row, local_index, page_tags[local_index])
@@ -326,18 +349,17 @@ def _refresh_analog_table(app, tags, page_count, start, visible, refresh_started
     table = app.analog_table
     table.delete(*table.get_children())
     app._analog_table_tags = list(visible)
+    app._analog_table_items_by_name = {}
     selected_item = None
     for tag in visible:
         value = app.tag_runtime.get_value(tag.name, 0)
-        settings = getattr(app, "_analog_profile_cache", {}).get(tag.name, {})
-        plc = getattr(app, "_plc_values", {}).get(tag.name)
-        simulated = getattr(app, "_simulated_values", {}).get(tag.name)
-        different = plc is not None and simulated is not None and plc != simulated
+        settings = canonical_analog_profile(app, tag)
         item = table.insert("", "end", values=(
             tag.address, tag.name, tag.data_type, value,
-            settings.get("mode", "Manual") if tag.enabled_sim else "PLC read-only",
-            "⚠ differs" if different else "✓ identical",
+            settings["mode"] if tag.enabled_sim else "PLC-only",
+            _analog_simulation_summary(app, tag),
         ))
+        app._analog_table_items_by_name[tag.name] = item
         if tag.name == selected:
             selected_item = item
     app._analog_rebuilding = False
@@ -373,9 +395,11 @@ def update_analog_table_values(app):
         current = app.tag_runtime.get_value(tag.name, 0)
         previous = app._analog_last_values.get(tag.name)
         values[3] = current
-        plc = getattr(app, "_plc_values", {}).get(tag.name)
-        simulated = getattr(app, "_simulated_values", {}).get(tag.name)
-        values[5] = "⚠ differs" if plc is not None and simulated is not None and plc != simulated else "✓ identical"
+        values[4] = (
+            canonical_analog_profile(app, tag)["mode"]
+            if tag.enabled_sim else "PLC-only"
+        )
+        values[5] = _analog_simulation_summary(app, tag)
         table.item(item, values=values)
         if previous is not None and previous != current and hasattr(table, "tag_configure"):
             table.tag_configure("changed", background="#145a78")
@@ -387,6 +411,51 @@ def update_analog_table_values(app):
     _bind_selected_analog(app)
 
 
+def _analog_simulation_summary(app, tag):
+    if not tag.enabled_sim:
+        return "PLC-only"
+    state = getattr(app, "analog_simulations", {}).get(tag.name)
+    running = bool(state and state.running)
+    plc = getattr(app, "_plc_values", {}).get(tag.name)
+    simulated = getattr(app, "_simulated_values", {}).get(tag.name)
+    if plc is not None and simulated is not None:
+        comparison = "⚠ differs" if plc != simulated else "✓ identical"
+    elif simulated is not None:
+        comparison = "simulated"
+    else:
+        comparison = "ready"
+    return f"Running · {comparison}" if running else comparison
+
+
+def refresh_analog_tree_row(app, tag_name):
+    """Refresh one visible Treeview row using stable tag identity."""
+    table = getattr(app, "analog_table", None)
+    if table is None or not widget_exists(table):
+        return False
+    item = getattr(app, "_analog_table_items_by_name", {}).get(tag_name)
+    tag = next(
+        (tag for tag in app._analog_table_tags if tag.name == tag_name), None
+    )
+    if item is None and tag is not None:
+        for candidate, visible_tag in zip(
+            table.get_children(), app._analog_table_tags
+        ):
+            if visible_tag.name == tag_name:
+                item = candidate
+                break
+    if item is not None and tag is not None:
+        values = list(table.item(item, "values"))
+        values[3] = app.tag_runtime.get_value(tag.name, 0)
+        values[4] = (
+            canonical_analog_profile(app, tag)["mode"]
+            if tag.enabled_sim else "PLC-only"
+        )
+        values[5] = _analog_simulation_summary(app, tag)
+        table.item(item, values=values)
+        return True
+    return False
+
+
 def _clear_analog_highlight(app, item, tag_name):
     app._analog_highlight_jobs.pop(tag_name, None)
     if widget_exists(app.analog_table) and item in app.analog_table.get_children():
@@ -396,24 +465,9 @@ def _clear_analog_highlight(app, item, tag_name):
 def begin_analog_refresh(app, tags):
     """Save visible settings; persistent pooled widgets are never destroyed."""
     LOGGER.info("Analog refresh started")
-    cache = getattr(app, "_analog_profile_cache", {})
-    for index, item in enumerate(app.analog_controls):
-        if index >= len(app.analog_tags) or not item.get("interactive", True):
-            continue
-        tag_name = app.analog_tags[index].name
-        cache[tag_name] = {
-            "tag": tag_name,
-            "mode": item["profile_mode"].get(),
-            "min": item["min_entry"].get(),
-            "max": item["max_entry"].get(),
-            "step": item["step_entry"].get(),
-            "interval_ms": item["interval_entry"].get(),
-        }
-    app._analog_profile_cache = cache
+    _cache_selected_analog_configuration(app)
     app.analog_controls.clear()
     app.analog_tags.clear()
-    app.analog_profile_running.clear()
-    app.analog_profile_directions.clear()
     LOGGER.info("Analog refresh tags received count=%d", len(tags))
 
 
@@ -431,13 +485,134 @@ def on_slider_changed(app, index, value):
 def on_profile_start(app, index):
     if getattr(app, "is_rebuilding", False) or getattr(app, "_analog_rebuilding", False):
         return
+    commit_analog_editor_configuration(app, mark_dirty=True)
     start_profile(app, index)
+    refresh_analog_tree_row(app, app.analog_tags[index].name)
 
 
 def on_profile_stop(app, index):
     if getattr(app, "is_rebuilding", False) or getattr(app, "_analog_rebuilding", False):
         return
     stop_profile(app, index)
+
+
+def commit_analog_editor_configuration(app, *, mark_dirty=False):
+    if not getattr(app, "analog_controls", None) or not getattr(app, "analog_tags", None):
+        return False
+    item = app.analog_controls[0]
+    tag = app.analog_tags[0]
+    required = (
+        "profile_mode", "min_entry", "max_entry", "step_entry",
+        "interval_entry",
+    )
+    if not item.get("interactive", True) or not all(key in item for key in required):
+        return False
+    configuration = {"tag": tag.name, **editor_configuration(item)}
+    _profile, changed = update_canonical_analog_profile(
+        app, tag, configuration
+    )
+    if changed:
+        refresh_analog_tree_row(app, tag.name)
+        refresh_analog_simulation_status(app, tag.name)
+        if mark_dirty:
+            callback = getattr(app, "mark_project_modified", None)
+            if callable(callback):
+                callback()
+    return changed
+
+
+def _cache_selected_analog_configuration(app):
+    """Compatibility wrapper for existing refresh and bulk callers."""
+    return commit_analog_editor_configuration(app, mark_dirty=False)
+
+
+def on_analog_profile_editor_changed(app, _value=None):
+    if getattr(app, "is_rebuilding", False) or getattr(app, "_analog_rebuilding", False):
+        return
+    commit_analog_editor_configuration(app, mark_dirty=True)
+
+
+def sync_selected_editor_from_canonical(app):
+    if not getattr(app, "analog_tags", None):
+        return
+    tag = app.analog_tags[0]
+    editor = app.analog_editor
+    profile = canonical_analog_profile(app, tag)
+    editor["profile_mode"].set(profile["mode"])
+    _replace_entry(editor["min_entry"], profile["min"])
+    _replace_entry(editor["max_entry"], profile["max"])
+    _replace_entry(editor["step_entry"], profile["step"])
+    _replace_entry(editor["interval_entry"], profile["interval_ms"])
+    refresh_analog_simulation_status(app, tag.name)
+
+
+def start_all_analog_simulations(app):
+    """Start configured profiles for every simulation-enabled analog input."""
+    if getattr(app, "is_rebuilding", False) or getattr(app, "_analog_rebuilding", False):
+        return 0
+    editor_changed = commit_analog_editor_configuration(app, mark_dirty=False)
+    manager = ensure_analog_simulation_manager(app)
+    tags = [
+        tag for tag in getattr(app, "tags", [])
+        if (
+            tag.enabled_sim
+            and tag.direction == "Input"
+            and tag.data_type in ("INT", "REAL")
+        )
+    ]
+    converted = ensure_dynamic_analog_profiles(app, tags)
+    if converted:
+        sync_selected_editor_from_canonical(app)
+    if editor_changed or converted:
+        callback = getattr(app, "mark_project_modified", None)
+        if callable(callback):
+            callback()
+    started = 0
+    for tag in tags:
+        try:
+            manager.start(tag, schedule=False)
+        except ValueError:
+            LOGGER.warning("Invalid analog profile configuration for tag %s", tag.name)
+        else:
+            started += 1
+    manager.ensure_scheduler()
+    if getattr(app, "_analog_structure_initialized", False):
+        refresh_analog_tab(app)
+    refresh_analog_simulation_status(
+        app, getattr(app, "_analog_selected_tag_name", None)
+    )
+    return started
+
+
+def stop_all_analog_simulations(app):
+    manager = ensure_analog_simulation_manager(app)
+    manager.stop_all()
+    return manager.active_count
+
+
+def refresh_analog_simulation_status(app, tag_name, *, error=False):
+    if not tag_name or tag_name != getattr(app, "_analog_selected_tag_name", None):
+        return
+    editor = getattr(app, "analog_editor", None)
+    if not editor or not editor.get("interactive", True):
+        return
+    if error:
+        editor["profile_status"].configure(text="ERRO PLC", text_color="orange")
+        return
+    state = getattr(app, "analog_simulations", {}).get(tag_name)
+    if state is not None and state.running:
+        editor["profile_status"].configure(
+            text=f"{state.mode} ON", text_color="lime"
+        )
+        editor["live"].configure(text=f"{state.current_value:g}")
+    else:
+        tag = next(
+            (item for item in getattr(app, "tags", []) if item.name == tag_name),
+            None,
+        )
+        mode = canonical_analog_profile(app, tag)["mode"] if tag else "Manual"
+        status = "MANUAL" if mode == "Manual" else f"{mode} READY"
+        editor["profile_status"].configure(text=status, text_color="gray")
 
 
 def create_analog_row_widgets(app):
@@ -474,7 +649,10 @@ def create_analog_row_widgets(app):
     profile = ctk.CTkFrame(card)
     profile.pack(fill="x", padx=10, pady=8)
     ctk.CTkLabel(profile, text="Modo").pack(side="left", padx=5)
-    profile_mode = ctk.CTkOptionMenu(profile, values=["Manual", "Ramp", "Random", "Step"], width=100)
+    profile_mode = ctk.CTkOptionMenu(
+        profile, values=["Manual", "Ramp", "Random", "Step"], width=100,
+        command=lambda value: on_analog_profile_editor_changed(app, value),
+    )
     profile_mode.pack(side="left", padx=5)
     ctk.CTkLabel(profile, text="Min").pack(side="left", padx=5)
     min_entry = ctk.CTkEntry(profile, width=80); min_entry.pack(side="left", padx=5)
@@ -484,8 +662,12 @@ def create_analog_row_widgets(app):
     step_entry = ctk.CTkEntry(profile, width=80); step_entry.pack(side="left", padx=5)
     ctk.CTkLabel(profile, text="Intervalo ms").pack(side="left", padx=5)
     interval_entry = ctk.CTkEntry(profile, width=90); interval_entry.pack(side="left", padx=5)
-    start_button = ctk.CTkButton(profile, text="Start", width=90); start_button.pack(side="left", padx=8)
-    stop_button = ctk.CTkButton(profile, text="Stop", width=90); stop_button.pack(side="left", padx=8)
+    for entry in (min_entry, max_entry, step_entry, interval_entry):
+        if hasattr(entry, "bind"):
+            entry.bind("<KeyRelease>", lambda _event: on_analog_profile_editor_changed(app))
+            entry.bind("<FocusOut>", lambda _event: on_analog_profile_editor_changed(app))
+    start_button = ctk.CTkButton(profile, text="Start Selected", width=110); start_button.pack(side="left", padx=8)
+    stop_button = ctk.CTkButton(profile, text="Stop Selected", width=110); stop_button.pack(side="left", padx=8)
     return {
         "frame": card, "top": top, "profile_frame": profile,
         "address_label": address, "protocol_address_label": protocol_address,
@@ -539,12 +721,12 @@ def bind_analog_row(app, row, index, tag):
     row["slider"].set(initial_value)
     row["start_button"].configure(command=lambda idx=index: on_profile_start(app, idx))
     row["stop_button"].configure(command=lambda idx=index: on_profile_stop(app, idx))
-    settings = getattr(app, "_analog_profile_cache", {}).get(tag.name, {})
-    row["profile_mode"].set(settings.get("mode", "Manual"))
-    _replace_entry(row["min_entry"], settings.get("min", "0"))
-    _replace_entry(row["max_entry"], settings.get("max", "27648"))
-    _replace_entry(row["step_entry"], settings.get("step", "500"))
-    _replace_entry(row["interval_entry"], settings.get("interval_ms", "500"))
+    settings = canonical_analog_profile(app, tag)
+    row["profile_mode"].set(settings["mode"])
+    _replace_entry(row["min_entry"], settings["min"])
+    _replace_entry(row["max_entry"], settings["max"])
+    _replace_entry(row["step_entry"], settings["step"])
+    _replace_entry(row["interval_entry"], settings["interval_ms"])
     row["profile_status"].configure(text="MANUAL", text_color="gray")
     if tag.enabled_sim:
         row["name_entry"].configure(state="normal")
@@ -558,7 +740,7 @@ def bind_analog_row(app, row, index, tag):
         _hide(row["slider"])
         _hide(row["profile_frame"])
         _show(row["readonly_label"], side="left", padx=8)
-    app.analog_profile_directions[index] = 1
+    refresh_analog_simulation_status(app, tag.name)
 
 
 def create_analog_row(app, index, tag):

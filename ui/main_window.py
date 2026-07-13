@@ -43,9 +43,11 @@ from ui.analog_tab import (
     create_analog_tab,
     create_analog_row,
     finish_analog_refresh,
+    refresh_analog_tree_row,
     refresh_analog_tab,
     update_analog_table_values,
 )
+from ui.analog_profiles import AnalogSimulationManager
 from ui.pid_tab import create_pid_tab
 from ui.pid_logic import start_pid as pid_start
 from ui.pid_logic import stop_pid as pid_stop
@@ -156,6 +158,8 @@ class PLCSimulator:
         self.analog_tags = []
         self.analog_profile_directions = {}
         self.analog_profile_running = {}
+        self.analog_simulations = {}
+        self.analog_simulation_manager = AnalogSimulationManager(self)
         self.project_path = None
         self._trend_initialized = False
         self._dashboard_initialized = False
@@ -502,6 +506,7 @@ class PLCSimulator:
             LOGGER.info("Signal generation suppressed during import rebuild")
             return False
         self.tag_runtime.sync(getattr(self, "tags", []))
+        self.analog_simulation_manager.reconcile(self.tags)
         invalid_tags = get_invalid_tags_for_brand(self)
         for tag in invalid_tags:
             self.tag_runtime.invalidate(tag.name)
@@ -737,20 +742,29 @@ class PLCSimulator:
             return None
         tag = self.analog_tags[index]
 
+        return self.write_analog_tag(tag, value)
+
+    def write_analog_tag(self, tag, value, *, notify=True):
+        """Write one analog tag without depending on the selected editor row."""
+        if self.is_rebuilding or not tag.enabled_sim:
+            return None
+        value = int(value) if tag.data_type == "INT" else float(value)
+
         if not self.is_online():
-            self.update_analog_ui(
-                index,
-                value,
-                source=RuntimeValueSource.SIMULATION,
+            self.tag_runtime.update(
+                tag.name, value, RuntimeValueSource.SIMULATION
             )
-            self.status_label.configure(
-                text="● SIMULAÇÃO OFFLINE",
-                text_color="cyan",
-            )
-            update_dashboard(
-                self,
-                f"Process value {tag.name} = {value} (simulation)",
-            )
+            self._simulated_values[tag.name] = value
+            self._update_visible_analog_tag(tag, value)
+            if notify:
+                self.status_label.configure(
+                    text="● SIMULAÇÃO OFFLINE",
+                    text_color="cyan",
+                )
+                update_dashboard(
+                    self,
+                    f"Process value {tag.name} = {value} (simulation)",
+                )
             return value
 
         real_value = self.plc_service.write_numeric(tag, value)
@@ -759,17 +773,24 @@ class PLCSimulator:
             self.status_label.configure(text="● ERRO ESCRITA", text_color="orange")
             return None
 
-        self.update_analog_ui(
-            index,
-            real_value,
-        )
-        self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
-        update_dashboard(
-            self,
-            f"Process value {tag.name} = {real_value} (PLC)",
-        )
+        self._simulated_values[tag.name] = value
+        self._plc_values[tag.name] = real_value
+        self._update_visible_analog_tag(tag, real_value)
+        if notify:
+            self.status_label.configure(text="● ESCRITA + LEITURA OK", text_color="lime")
+            update_dashboard(
+                self,
+                f"Process value {tag.name} = {real_value} (PLC)",
+            )
 
         return real_value
+
+    def _update_visible_analog_tag(self, tag, value):
+        for index, visible_tag in enumerate(self.analog_tags):
+            if visible_tag.name == tag.name:
+                self.update_analog_ui(index, value)
+                break
+        refresh_analog_tree_row(self, tag.name)
 
     def start_cyclic_read(self):
         if self.is_closing or getattr(self, "_shutdown_started", False):
@@ -1049,8 +1070,12 @@ class PLCSimulator:
         phase("stop_pid", lambda: setattr(self, "pid_running", False))
         self._shutdown_marker("PID STOP END")
         def stop_profiles():
-            for index in tuple(self.analog_profile_running):
-                self.analog_profile_running[index] = False
+            manager = getattr(self, "analog_simulation_manager", None)
+            if manager is not None:
+                manager.shutdown()
+            else:
+                for index in tuple(self.analog_profile_running):
+                    self.analog_profile_running[index] = False
         phase("stop_profiles", stop_profiles)
         self._shutdown_phase = "WORKER STOP"
         self._shutdown_marker("WORKER STOP START")

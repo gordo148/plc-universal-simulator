@@ -305,7 +305,10 @@ def stop_all_simulations(app):
     if not messagebox.askyesno("Stop simulations","Stop all pulses and analog profiles?"):return
     for job in tuple(getattr(app,"pending_pulse_callbacks",{}).values()): app.cancel_job(job)
     getattr(app,"pending_pulse_callbacks",{}).clear()
-    for index in tuple(getattr(app,"analog_profile_running",{})): app.analog_profile_running[index]=False
+    manager=getattr(app,"analog_simulation_manager",None)
+    if manager is not None: manager.stop_all()
+    else:
+        for index in tuple(getattr(app,"analog_profile_running",{})): app.analog_profile_running[index]=False
     record_dashboard_event(app,"All simulations stopped","WARN")
 
 

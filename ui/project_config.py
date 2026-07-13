@@ -20,6 +20,7 @@ from ui.tag_manager import (
     refresh_tag_table,
     update_tag_address_context,
 )
+from ui.analog_profiles import canonical_analog_profile
 
 
 PROJECT_EXTENSION = ".simproject"
@@ -105,8 +106,13 @@ def open_project_path(app, file_path):
     runtime_snapshot = app.tag_runtime.snapshot()
     current_path = getattr(app, "project_path", None)
 
-    if not _apply_project_data(app, staged_project):
-        _apply_project_data(app, current_project, show_error=False)
+    if not _apply_project_data(app, staged_project, project_path=str(file_path)):
+        _apply_project_data(
+            app,
+            current_project,
+            show_error=False,
+            project_path=str(current_path or "<previous in-memory project>"),
+        )
         app.tag_runtime.restore(runtime_snapshot, app.tags)
         app.project_path = current_path
         _update_project_title(app)
@@ -193,20 +199,14 @@ def build_project_data(app):
         }
     digital_inputs = list(digital_inputs_by_tag.values())
 
-    analog_profiles_by_tag = dict(getattr(app, "_analog_profile_cache", {}))
-    analog_tags = getattr(app, "analog_tags", [])
-    for index, item in enumerate(getattr(app, "analog_controls", [])):
-        if not item.get("interactive", True):
-            continue
-        analog_profiles_by_tag[analog_tags[index].name] = {
-            "tag": analog_tags[index].name,
-            "mode": item["profile_mode"].get(),
-            "min": item["min_entry"].get(),
-            "max": item["max_entry"].get(),
-            "step": item["step_entry"].get(),
-            "interval_ms": item["interval_entry"].get(),
-        }
-    analog_profiles = list(analog_profiles_by_tag.values())
+    if getattr(app, "analog_controls", None):
+        from ui.analog_tab import commit_analog_editor_configuration
+        commit_analog_editor_configuration(app, mark_dirty=False)
+    analog_profiles = [
+        dict(canonical_analog_profile(app, tag))
+        for tag in getattr(app, "tags", [])
+        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+    ]
 
     alarms = [
         {
@@ -326,12 +326,18 @@ def _write_project(app, file_path):
     return True
 
 
-def _apply_project_data(app, project, show_error=True):
+def _apply_project_data(app, project, show_error=True, project_path=None):
+    phase = "initialization"
     try:
+        phase = "stopping current runtime"
+        manager = getattr(app, "analog_simulation_manager", None)
+        if manager is not None:
+            manager.stop_all()
         if hasattr(app, "cancel_pending_tab_refreshes"):
             app.cancel_pending_tab_refreshes()
         app.disconnect()
 
+        phase = "creating tags"
         tags = [
             Tag.from_dict(tag_data)
             for tag_data in project.get("tags", [])
@@ -341,10 +347,14 @@ def _apply_project_data(app, project, show_error=True):
         if not names_valid:
             raise ValueError(names_message)
 
+        phase = "restoring tag feature configuration"
         _restore_tag_feature_configuration(tags, project)
         app.tags = tags
         app.tag_runtime.clear()
+        phase = "normalizing analog profiles"
+        _restore_analog_profiles(app, project.get("analog_profiles", []))
 
+        phase = "restoring PLC connection settings"
         plc = project.get("plc", {})
         brand = plc.get("brand", "Siemens")
         if brand not in SUPPORTED_BRANDS:
@@ -376,6 +386,7 @@ def _apply_project_data(app, project, show_error=True):
             app._connection_ui_rebuilding = False
         update_tag_address_context(app)
 
+        phase = "rebuilding tag and simulation views"
         if hasattr(app, "ensure_tag_manager_tab"):
             app.ensure_tag_manager_tab()
         refresh_tag_table(app)
@@ -388,12 +399,7 @@ def _apply_project_data(app, project, show_error=True):
             app._pending_digital_settings = copy.deepcopy(digital_settings)
         else:
             _restore_digital_settings(app, digital_settings)
-        if "Entradas Analógicas" in getattr(app, "_dirty_tabs", set()):
-            app._pending_analog_profiles = copy.deepcopy(
-                project.get("analog_profiles", [])
-            )
-        else:
-            _restore_analog_profiles(app, project.get("analog_profiles", []))
+        phase = "restoring PID, alarms, trends, and UI state"
         if hasattr(app, "ensure_pid_tab"):
             app.ensure_pid_tab()
         _restore_pid(app, project.get("pid", {}))
@@ -405,12 +411,17 @@ def _apply_project_data(app, project, show_error=True):
             app, project.get("runtime_settings", {}).get("ui_state", {})
         )
 
+        phase = "refreshing dashboard"
         from ui.dashboard_tab import clear_dashboard_events, update_dashboard
         clear_dashboard_events(app)
         update_dashboard(app, "Projeto carregado")
         return True
-    except Exception as error:
-        LOGGER.exception("Project apply failed")
+    except Exception:
+        LOGGER.exception(
+            "Project apply failed: path=%s phase=%s",
+            project_path or "<in-memory project>",
+            phase,
+        )
         if show_error:
             messagebox.showerror(
                 "Erro ao aplicar projeto",
@@ -538,19 +549,57 @@ def _restore_digital_settings(app, settings):
 
 
 def _restore_analog_profiles(app, profiles):
-    by_tag = {
-        str(item.get("tag", "")): item
-        for item in profiles
-        if isinstance(item, dict)
-    }
+    analog_tags = [
+        tag for tag in getattr(app, "tags", [])
+        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+    ]
+    tags_by_name = {tag.name: tag for tag in analog_tags}
+    by_tag = {}
+    if isinstance(profiles, dict):
+        profiles = [
+            dict(value, tag=str(name)) if isinstance(value, dict) else value
+            for name, value in profiles.items()
+        ]
+    elif not isinstance(profiles, (list, tuple)):
+        LOGGER.warning(
+            "Analog profiles section normalized: type=%s expected=list",
+            type(profiles).__name__,
+        )
+        profiles = []
+
+    for position, item in enumerate(profiles):
+        tag_name = ""
+        if isinstance(item, dict):
+            tag_name = str(
+                item.get("tag") or item.get("tag_name") or item.get("name") or ""
+            )
+            if not tag_name:
+                raw_index = item.get("index", item.get("row", position))
+                try:
+                    tag_name = analog_tags[int(raw_index)].name
+                except (TypeError, ValueError, IndexError):
+                    tag_name = ""
+        elif position < len(analog_tags):
+            tag_name = analog_tags[position].name
+        if not tag_name:
+            LOGGER.warning("Analog profile ignored: position=%d has no tag identity", position)
+            continue
+        if tag_name not in tags_by_name:
+            LOGGER.warning("Analog profile ignored: tag=%s is not present", tag_name)
+            continue
+        by_tag[tag_name] = item
+
+    # Establish the complete canonical store before any Treeview/editor refresh.
     app._analog_profile_cache = dict(by_tag)
-    for index, widget in enumerate(app.analog_controls):
+    for tag_name, tag in tags_by_name.items():
+        canonical_analog_profile(app, tag)
+    for index, widget in enumerate(getattr(app, "analog_controls", [])):
         if not widget.get("interactive", True):
             continue
-        config = by_tag.get(app.analog_tags[index].name)
-        if config is None:
+        if index >= len(getattr(app, "analog_tags", [])):
             continue
-        mode = config.get("mode", "Manual")
+        config = canonical_analog_profile(app, app.analog_tags[index])
+        mode = config["mode"]
         widget["profile_mode"].set(
             mode if mode in ("Manual", "Ramp", "Random", "Step") else "Manual"
         )
@@ -558,7 +607,14 @@ def _restore_analog_profiles(app, profiles):
         _set_entry(widget["max_entry"], config.get("max", "27648"))
         _set_entry(widget["step_entry"], config.get("step", "500"))
         _set_entry(widget["interval_entry"], config.get("interval_ms", "500"))
-        widget["profile_status"].configure(text="MANUAL", text_color="gray")
+    if getattr(app, "_analog_structure_initialized", False):
+        from ui.analog_tab import (
+            refresh_analog_tree_row,
+            sync_selected_editor_from_canonical,
+        )
+        sync_selected_editor_from_canonical(app)
+        for tag in getattr(app, "_analog_table_tags", []):
+            refresh_analog_tree_row(app, tag.name)
 
 
 def _restore_pid(app, pid):
@@ -703,13 +759,37 @@ def _stage_project_data(project):
         raise ValueError(names_message)
     staged["tags"] = [tag.to_dict() for tag in tags]
 
+    raw_profiles = staged.get("analog_profiles", [])
+    if raw_profiles is None:
+        staged["analog_profiles"] = []
+    elif isinstance(raw_profiles, dict):
+        normalized_profiles = []
+        for name, value in raw_profiles.items():
+            if isinstance(value, dict):
+                normalized_profiles.append(dict(value, tag=str(name)))
+            else:
+                LOGGER.warning(
+                    "Analog profile normalized while staging: tag=%s type=%s",
+                    name,
+                    type(value).__name__,
+                )
+                normalized_profiles.append({"tag": str(name)})
+        staged["analog_profiles"] = normalized_profiles
+    elif not isinstance(raw_profiles, list):
+        LOGGER.warning(
+            "Analog profiles section ignored while staging: type=%s",
+            type(raw_profiles).__name__,
+        )
+        staged["analog_profiles"] = []
+    else:
+        staged["analog_profiles"] = raw_profiles
+
     section_types = {
         "runtime_settings": dict,
         "pid": dict,
         "trends": dict,
         "dashboard": dict,
         "alarms": list,
-        "analog_profiles": list,
     }
     for section, expected_type in section_types.items():
         value = staged.get(section, expected_type())

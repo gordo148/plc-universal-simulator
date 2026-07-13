@@ -1652,9 +1652,49 @@ def set_all_tag_option(app, option_name, enabled):
             setattr(tag, option_name, enabled)
             changed = True
 
+    profile_changed = False
+    if option_name == "enabled_sim":
+        if enabled:
+            profile_changed = _set_manual_analog_profiles_to_ramp(app)
+        else:
+            from ui.analog_profiles import canonical_analog_profile
+            for tag in app.tags:
+                if tag.direction == "Input" and tag.data_type in ("INT", "REAL"):
+                    canonical_analog_profile(app, tag)
+            manager = getattr(app, "analog_simulation_manager", None)
+            if manager is not None:
+                manager.stop_all()
+
     refresh_tag_table(app)
-    if changed:
+    if getattr(app, "_analog_structure_initialized", False):
+        from ui.analog_tab import refresh_analog_tab
+        refresh_analog_tab(app)
+    if changed or profile_changed:
         mark_project_modified(app)
+    if option_name == "enabled_sim" and enabled and hasattr(app, "status_label"):
+        app.status_label.configure(
+            text="All analog simulations enabled; Manual tags set to Ramp",
+            text_color="lime",
+        )
+
+
+def _set_manual_analog_profiles_to_ramp(app):
+    """Convert only Manual analog-input profiles for the bulk enable action."""
+    from ui.analog_profiles import ensure_dynamic_analog_profiles
+    analog_tags = [
+        tag for tag in app.tags
+        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+    ]
+    if getattr(app, "_analog_structure_initialized", False):
+        from ui.analog_tab import (
+            commit_analog_editor_configuration,
+            sync_selected_editor_from_canonical,
+        )
+        commit_analog_editor_configuration(app, mark_dirty=False)
+    changed_names = ensure_dynamic_analog_profiles(app, analog_tags)
+    if changed_names and getattr(app, "_analog_structure_initialized", False):
+        sync_selected_editor_from_canonical(app)
+    return bool(changed_names)
 
 
 def mark_project_modified(app):
@@ -1667,6 +1707,20 @@ def mark_project_modified(app):
 def set_tag_flag(app, tag, field, value):
     changed = getattr(tag, field) != value
     setattr(tag, field, value)
+    if (
+        field == "enabled_sim"
+        and tag.direction == "Input"
+        and tag.data_type in ("INT", "REAL")
+    ):
+        from ui.analog_profiles import canonical_analog_profile
+        canonical_analog_profile(app, tag)
+        if not value:
+            manager = getattr(app, "analog_simulation_manager", None)
+            if manager is not None:
+                manager.stop(tag.name)
+        if getattr(app, "_analog_structure_initialized", False):
+            from ui.analog_tab import refresh_analog_tree_row
+            refresh_analog_tree_row(app, tag.name)
     update_master_tag_option_states(app, field)
     if changed:
         mark_project_modified(app)
