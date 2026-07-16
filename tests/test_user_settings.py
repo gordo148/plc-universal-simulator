@@ -63,6 +63,10 @@ def test_invalid_saved_preferences_are_sanitized(tmp_path):
     assert ApplicationSettings.load(path) == ApplicationSettings()
 
 
+def test_new_settings_default_to_projects_directory():
+    assert ApplicationSettings().last_project_folder == "configs/projects"
+
+
 def test_close_is_cancelled_when_unsaved_changes_are_not_discarded(monkeypatch):
     destroyed = []
     simulator = object.__new__(PLCSimulator)

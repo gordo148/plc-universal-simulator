@@ -13,10 +13,12 @@ from ui.analog_profiles import (
     update_canonical_analog_profile,
 )
 from ui.scrollable_frame import widget_exists
+from core.tag_model import SIEMENS_NUMERIC_TYPES
 from core.tag_runtime import RuntimeValueSource
 from ui.table_utils import (
     PAGE_SIZES, ToolTip, clear_entry, copy_text, debounce, filter_tags,
-    move_selection, page_tags as paginate_tags, sort_tags,
+    move_selection, page_tags as paginate_tags, sort_tags, tag_comment_tooltip,
+    treeview_tag_comment_tooltip,
 )
 
 
@@ -30,7 +32,7 @@ def create_analog_tab_structure(app):
     controls = ctk.CTkFrame(app.tab_analog)
     controls.pack(fill="x", padx=10, pady=(10, 0))
     ctk.CTkLabel(controls, text="Search").pack(side="left", padx=5)
-    app.analog_search_entry = ctk.CTkEntry(controls, width=260)
+    app.analog_search_entry = ctk.CTkEntry(controls, width=260, placeholder_text="Name, address or comment")
     app.analog_search_entry.pack(side="left", padx=5)
     app.analog_search_entry.bind("<KeyRelease>", lambda event: _analog_search_key(app, event))
     app.analog_search_clear = ctk.CTkButton(controls, text="×", width=30, command=lambda: clear_analog_search(app))
@@ -91,11 +93,11 @@ def _create_analog_master_detail(app):
     body.pack(fill="both", expand=True, padx=10, pady=10)
     table_frame = ctk.CTkFrame(body)
     table_frame.pack(fill="both", expand=True)
-    columns = ("address", "name", "type", "value", "profile", "difference")
+    columns = ("address", "name", "comment", "type", "value", "profile", "difference")
     table = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
     for column, title, width in (
         ("address", "Address", 120), ("name", "Name", 260),
-        ("type", "Type", 80), ("value", "Current value", 120),
+        ("comment", "Comment", 220), ("type", "Type", 80), ("value", "Current value", 120),
         ("profile", "Setpoint / Profile", 160),
         ("difference", "PLC / Sim", 120),
     ):
@@ -121,6 +123,14 @@ def _create_analog_master_detail(app):
     app._analog_table_tags = []
     app._analog_table_items_by_name = {}
     app._analog_selected_tag_name = None
+    tag_comment_tooltip(
+        editor_row["frame"],
+        lambda: next((tag for tag in getattr(app, "tags", []) if tag.name == app._analog_selected_tag_name), None),
+    )
+    treeview_tag_comment_tooltip(
+        table,
+        lambda row: app._analog_table_tags[table.index(row)] if row else None,
+    )
     for widget, text in ((editor_row["slider"], "Set the selected analog simulation value."), (editor_row["numeric_entry"], "Enter an exact numeric value."), (editor_row["profile_mode"], "Select Manual, Ramp, Random, or Step simulation mode."), (editor_row["step_entry"], "Amount added or removed on each profile cycle."), (editor_row["interval_entry"], "Time between profile updates in milliseconds."), (editor_row["live"], "Latest runtime value.")):
         ToolTip(widget, text)
 
@@ -355,7 +365,7 @@ def _refresh_analog_table(app, tags, page_count, start, visible, refresh_started
         value = app.tag_runtime.get_value(tag.name, 0)
         settings = canonical_analog_profile(app, tag)
         item = table.insert("", "end", values=(
-            tag.address, tag.name, tag.data_type, value,
+            tag.address, tag.name, tag.comment, tag.data_type, value,
             settings["mode"] if tag.enabled_sim else "PLC-only",
             _analog_simulation_summary(app, tag),
         ))
@@ -557,7 +567,7 @@ def start_all_analog_simulations(app):
         if (
             tag.enabled_sim
             and tag.direction == "Input"
-            and tag.data_type in ("INT", "REAL")
+            and tag.data_type in SIEMENS_NUMERIC_TYPES
         )
     ]
     converted = ensure_dynamic_analog_profiles(app, tags)

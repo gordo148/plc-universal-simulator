@@ -8,7 +8,8 @@ from ui.scrollable_frame import widget_exists
 from core.tag_runtime import RuntimeValueSource
 from ui.table_utils import (
     PAGE_SIZES, ToolTip, clear_entry, copy_text, debounce, filter_tags,
-    move_selection, page_tags, sort_tags,
+    move_selection, page_tags, sort_tags, tag_comment_tooltip,
+    treeview_tag_comment_tooltip,
 )
 
 
@@ -28,7 +29,7 @@ def create_digital_tab_structure(app):
     controls = ctk.CTkFrame(app.tab_digital)
     controls.pack(fill="x", padx=10, pady=(10, 0))
     ctk.CTkLabel(controls, text="Search").pack(side="left", padx=(5, 2))
-    app.digital_search_entry = ctk.CTkEntry(controls, width=240, placeholder_text="Name, address or type")
+    app.digital_search_entry = ctk.CTkEntry(controls, width=240, placeholder_text="Name, address or comment")
     app.digital_search_entry.pack(side="left", padx=3)
     app.digital_search_clear = ctk.CTkButton(controls, text="×", width=30, command=lambda: clear_digital_search(app))
     app.digital_search_clear.pack(side="left", padx=(0, 8))
@@ -76,11 +77,11 @@ def _create_digital_master_detail(app):
     body.pack(fill="both", expand=True, padx=10, pady=10)
     table_frame = ctk.CTkFrame(body)
     table_frame.pack(fill="both", expand=True)
-    columns = ("status", "address", "name", "mode", "value", "difference")
+    columns = ("status", "address", "name", "comment", "mode", "value", "difference")
     table = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
     for column, title, width in (
         ("status", "Status", 70), ("address", "Address", 120),
-        ("name", "Name", 240), ("mode", "Mode", 90), ("value", "Value", 80),
+        ("name", "Name", 180), ("comment", "Comment", 220), ("mode", "Mode", 90), ("value", "Value", 80),
         ("difference", "PLC / Sim", 120),
     ):
         table.heading(column, text=title, command=lambda col=column: sort_digital_table(app, col))
@@ -94,6 +95,10 @@ def _create_digital_master_detail(app):
     editor.pack(fill="x", pady=(8, 0))
     app.digital_editor_title = ctk.CTkLabel(editor, text="Select a digital tag", font=("Arial", 14, "bold"))
     app.digital_editor_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 2))
+    tag_comment_tooltip(
+        app.digital_editor_title,
+        lambda: next((tag for tag in getattr(app, "tags", []) if tag.name == app._digital_selected_tag_name), None),
+    )
     app.digital_editor_plc = ctk.CTkLabel(editor, text="PLC: —", width=100)
     app.digital_editor_plc.grid(row=1, column=0, padx=8, pady=6)
     app.digital_editor_sim = ctk.CTkLabel(editor, text="Simulated: —", width=120)
@@ -119,6 +124,10 @@ def _create_digital_master_detail(app):
     app.digital_scroll = editor  # compatibility parent; normal refresh creates no rows here
     app._digital_table_tags = []
     app._digital_selected_tag_name = None
+    treeview_tag_comment_tooltip(
+        table,
+        lambda row: app._digital_table_tags[table.index(row)] if row else None,
+    )
     for widget, text in ((app.digital_editor_button, "Toggle the selected signal or execute its pulse mode."), (app.digital_editor_write, "Write the current simulated value."), (app.digital_editor_mode, "Choose Toggle or timed Pulse mode."), (app.digital_editor_pulse, "Pulse duration in milliseconds."), (app.digital_editor_value, "Latest runtime value.")):
         ToolTip(widget, text)
 
@@ -364,7 +373,7 @@ def _refresh_digital_table(app, tags, page, count, start, visible, refresh_start
         different = plc is not None and simulated is not None and bool(plc) != bool(simulated)
         item = table.insert("", "end", values=(
             "🟢 ON" if state else "🔴 OFF", tag.address, tag.name,
-            settings.get("mode", "Toggle"), "1" if state else "0", "⚠ differs" if different else "✓ identical",
+            tag.comment, settings.get("mode", "Toggle"), "1" if state else "0", "⚠ differs" if different else "✓ identical",
         ))
         if tag.name == selected:
             selected_item = item

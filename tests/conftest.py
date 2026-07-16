@@ -32,10 +32,9 @@ def project_app():
         ip_entry=Value("192.168.1.10"),
         rack_entry=Value("0"),
         slot_entry=Value("1"),
-        db_entry=Value("100"),
         tags=[
-            TagDefinition("Run", "BOOL", "Input", "DBX0.0", True),
-            TagDefinition("Speed", "REAL", "Output", "DBD20"),
+            TagDefinition("Run", "BOOL", "Input", "%DB100.DBX0.0", True),
+            TagDefinition("Speed", "REAL", "Output", "%DB100.DBD20"),
         ],
         digital_controls=[],
         digital_tags=[],

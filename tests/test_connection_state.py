@@ -23,17 +23,17 @@ class Value:
 
 
 def connection_state():
-    return ConnectionState(ip="192.168.0.84", rack="0", slot="1", db_number="2000")
+    return ConnectionState(ip="192.168.0.84", rack="0", slot="1")
 
 
 def stale_entries(app):
-    app.ip_entry = app.rack_entry = app.slot_entry = app.db_entry = DestroyedEntry()
+    app.ip_entry = app.rack_entry = app.slot_entry = DestroyedEntry()
     return app
 
 
 def test_dashboard_connection_summary_uses_persistent_state():
     app = stale_entries(SimpleNamespace(connection_state=connection_state()))
-    assert dashboard_tab._connection_summary(app, "Siemens") == "192.168.0.84 · Rack 0 Slot 1 DB 2000"
+    assert dashboard_tab._connection_summary(app, "Siemens") == "192.168.0.84 · Rack 0 Slot 1"
 
 
 def test_connect_uses_persistent_siemens_values(monkeypatch):
@@ -42,7 +42,7 @@ def test_connect_uses_persistent_siemens_values(monkeypatch):
     app = stale_entries(SimpleNamespace(connection_state=connection_state(), _connection_ui_rebuilding=False, plc_service=service, status_label=SimpleNamespace(configure=lambda **_kw: None), cyclic_read_enabled=False, start_cyclic_read=lambda: None, schedule_job=lambda *_args: None))
     main_window.PLCSimulator.connect(app)
     app.connection_thread.join(timeout=1)
-    assert calls == [(('Siemens', '192.168.0.84'), {'rack':'0', 'slot':'1', 'db_number':'2000'})]
+    assert calls == [(('Siemens', '192.168.0.84'), {'rack':'0', 'slot':'1'})]
 
 
 def test_blocking_driver_connect_does_not_block_tk_caller():
@@ -62,7 +62,7 @@ def test_project_snapshot_uses_persistent_state(project_app):
     stale_entries(project_app)
     connection = project_config.build_project_data(project_app)["plc"]
     assert connection["ip"] == "192.168.0.84"
-    assert connection["settings"] == {"rack":"0", "slot":"1", "db_number":"2000"}
+    assert connection["settings"] == {"rack":"0", "slot":"1"}
 
 
 def test_update_brand_rebuilds_only_selected_options(monkeypatch):
@@ -82,8 +82,8 @@ def test_connect_is_ignored_during_connection_rebuild():
 
 def test_connection_restore_updates_model_without_entries():
     app = stale_entries(SimpleNamespace(connection_state=connection_state(), app=None))
-    project_config._restore_connection_settings(app, "Siemens", {"rack":"2", "slot":"3", "db_number":"400"})
-    assert [app.connection_state.get(key) for key in ("rack","slot","db_number")] == ["2","3","400"]
+    project_config._restore_connection_settings(app, "Siemens", {"rack":"2", "slot":"3"})
+    assert [app.connection_state.get(key) for key in ("rack","slot")] == ["2","3"]
 
 
 def test_connection_panel_switching_never_destroys_entries():
@@ -92,7 +92,7 @@ def test_connection_panel_switching_never_destroys_entries():
     assert ".destroy(" not in source
 
 
-def test_persistent_value_change_does_not_touch_previous_entry():
+def test_persistent_slot_change_does_not_touch_previous_entry():
     app = stale_entries(SimpleNamespace(connection_state=connection_state(), app=None))
-    header.set_connection_value(app, "db_number", "3000")
-    assert app.connection_state.db_number == "3000"
+    header.set_connection_value(app, "slot", "3")
+    assert app.connection_state.slot == "3"

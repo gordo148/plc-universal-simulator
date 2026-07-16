@@ -5,6 +5,7 @@ from ui.header import update_top_status_bar
 from ui.dashboard_tab import record_dashboard_event
 from ui.tag_manager import get_alarm_tags
 from ui.scrollable_frame import SafeScrollableFrame
+from ui.table_utils import tag_comment_tooltip
 
 
 def create_alarm_tab(app):
@@ -24,6 +25,10 @@ def create_alarm_tab(app):
         values=[tag.name for tag in get_alarm_tags(app)]
     )
     app.alarm_source_menu.pack(side="left", padx=5)
+    tag_comment_tooltip(
+        app.alarm_source_menu,
+        lambda: next((tag for tag in get_alarm_tags(app) if tag.name == app.alarm_source_menu.get()), None),
+    )
 
     ctk.CTkLabel(controls, text="Tipo").pack(side="left", padx=5)
 
@@ -65,7 +70,7 @@ def create_alarm_tab(app):
     header = ctk.CTkFrame(frame)
     header.pack(fill="x", padx=10, pady=(10, 0))
 
-    headers = ["Estado", "Variável", "Tipo", "Limite", "Valor", "Hora", "ACK", "Ação"]
+    headers = ["Estado", "Variável", "Comment", "Tipo", "Limite", "Valor", "Hora", "ACK", "Ação"]
 
     for col, text in enumerate(headers):
         ctk.CTkLabel(
@@ -149,29 +154,37 @@ def create_alarm_row(app, alarm):
     state.grid(row=0, column=0, padx=4, pady=6)
 
     source = ctk.CTkLabel(row, text=alarm["source"], width=120)
+    tag_comment_tooltip(
+        source,
+        lambda: next((tag for tag in get_alarm_tags(app) if tag.name == alarm["source"]), None),
+    )
     source.grid(row=0, column=1, padx=4)
 
+    tag = next((item for item in get_alarm_tags(app) if item.name == alarm["source"]), None)
+    comment = ctk.CTkLabel(row, text=tag.comment if tag else "", width=180)
+    comment.grid(row=0, column=2, padx=4)
+
     alarm_type = ctk.CTkLabel(row, text=alarm["type"], width=120)
-    alarm_type.grid(row=0, column=2, padx=4)
+    alarm_type.grid(row=0, column=3, padx=4)
 
     limit = ctk.CTkLabel(row, text=str(alarm["limit"]), width=120)
-    limit.grid(row=0, column=3, padx=4)
+    limit.grid(row=0, column=4, padx=4)
 
     value = ctk.CTkLabel(row, text="0", width=120)
-    value.grid(row=0, column=4, padx=4)
+    value.grid(row=0, column=5, padx=4)
 
     timestamp = ctk.CTkLabel(row, text="-", width=160)
-    timestamp.grid(row=0, column=5, padx=4)
+    timestamp.grid(row=0, column=6, padx=4)
 
     ack = ctk.CTkLabel(row, text="NO", text_color="gray", width=80)
-    ack.grid(row=0, column=6, padx=4)
+    ack.grid(row=0, column=7, padx=4)
 
     ctk.CTkButton(
         row,
         text="ACK",
         width=80,
         command=lambda a=alarm: acknowledge_alarm(app, a)
-    ).grid(row=0, column=7, padx=4)
+    ).grid(row=0, column=8, padx=4)
 
     app.alarm_rows.append({
         "alarm": alarm,

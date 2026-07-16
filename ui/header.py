@@ -22,7 +22,7 @@ COLOR_OFFLINE = "#ef4444"
 COLOR_WARNING = "#f59e0b"
 
 CONNECTION_DEFAULTS = {
-    "ip": "192.168.1.10", "rack": "0", "slot": "1", "db_number": "100",
+    "ip": "192.168.1.10", "rack": "0", "slot": "1",
     "port": "502", "slave_id": "1", "coil_start": "0", "register_start": "0",
     "schneider_model": "M221", "omron_port": "9600", "destination_node": "0", "source_node": "1",
 }
@@ -49,7 +49,6 @@ def ensure_connection_state(app):
     app.ip_var = app.connection_vars["ip"]
     app.rack_var = app.connection_vars["rack"]
     app.slot_var = app.connection_vars["slot"]
-    app.db_var = app.connection_vars["db_number"]
 
 
 def connection_value(app, name, default=""):
@@ -380,12 +379,12 @@ def create_siemens_options(app):
     app.slot_entry.grid(row=0, column=3, padx=5)
     _remember_connection_widget(app, "Siemens", "slot_entry", app.slot_entry)
 
-    ctk.CTkLabel(frame, text="DB").grid(row=0, column=4, padx=5)
-    app.db_entry = _connection_entry(app, frame, "db_number", 80)
-    app.db_entry.grid(row=0, column=5, padx=5)
-    _remember_connection_widget(app, "Siemens", "db_entry", app.db_entry)
-
-    ctk.CTkLabel(frame, text="Siemens: DBX / DBW", text_color="gray").grid(row=0, column=6, padx=20)
+    ctk.CTkLabel(
+        frame,
+        text="Each Siemens tag must contain its full PLC address.\nAbsolute DB addresses require non-optimized DB access on S7-1200/S7-1500.",
+        text_color="gray",
+        justify="left",
+    ).grid(row=0, column=4, padx=20)
 
 
 def create_schneider_options(app):

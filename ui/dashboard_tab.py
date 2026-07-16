@@ -10,7 +10,7 @@ import customtkinter as ctk
 
 from core.version import APP_VERSION
 from ui.header import connection_brand, connection_value
-from ui.table_utils import debounce, filter_tags, sort_tags
+from ui.table_utils import debounce, filter_tags, sort_tags, tag_comment_tooltip, treeview_tag_comment_tooltip
 from ui.tag_manager import get_dashboard_tags
 
 
@@ -19,6 +19,8 @@ EVENT_LIMIT = 50
 COLORS = {"green":"#22c55e", "red":"#ef4444", "amber":"#f59e0b", "neutral":"#94a3b8", "cyan":"#22d3ee"}
 CARD_BG = "#182431"
 BORDER = "#334155"
+DASHBOARD_COLUMNS = ("name","address","type","value","status","comment","source","alarm","trend")
+DASHBOARD_SORTABLE_COLUMNS = frozenset(("name", "address", "type", "value", "status"))
 
 
 def dashboard_counts(app):
@@ -59,6 +61,17 @@ def filter_dashboard_tags(tags, query="", quick_filter="All", runtime=None):
     return result
 
 
+def configure_dashboard_headings(tree, sort_callback):
+    """Configure sortable headings without passing invalid optional commands."""
+    for column in DASHBOARD_COLUMNS:
+        heading_options = {"text": column.title()}
+        if column in DASHBOARD_SORTABLE_COLUMNS:
+            command = lambda col=column: sort_callback(col)
+            if callable(command):
+                heading_options["command"] = command
+        tree.heading(column, **heading_options)
+
+
 def create_dashboard_tab(app):
     if getattr(app, "_dashboard_structure_created", False): return
     app._dashboard_structure_created = True
@@ -69,7 +82,7 @@ def create_dashboard_tab(app):
     app._dashboard_last_render = {}
 
     root = ctk.CTkFrame(app.tab_dashboard, fg_color="#0f1720")
-    root.pack(fill="both", expand=True, padx=10, pady=10)
+    root.pack(fill="both", expand=True, padx=4, pady=4)
     cards = ctk.CTkFrame(root, fg_color="transparent")
     cards.pack(fill="x", pady=(0, 6))
     app.dashboard_cards = {}
@@ -86,13 +99,13 @@ def create_dashboard_tab(app):
     center = ctk.CTkFrame(root, fg_color="transparent")
     center.pack(fill="both", expand=True)
     left = ctk.CTkFrame(center, fg_color=CARD_BG, border_width=1, border_color=BORDER)
-    left.pack(side="left", fill="both", expand=True, padx=(0, 5))
-    right = ctk.CTkFrame(center, width=360, fg_color=CARD_BG, border_width=1, border_color=BORDER)
-    right.pack(side="right", fill="y", padx=(5, 0)); right.pack_propagate(False)
+    left.pack(side="left", fill="both", expand=True, padx=(0, 3))
+    right = ctk.CTkFrame(center, width=330, fg_color=CARD_BG, border_width=1, border_color=BORDER)
+    right.pack(side="right", fill="y", padx=(3, 0)); right.pack_propagate(False)
 
     controls = ctk.CTkFrame(left, fg_color="transparent")
     controls.pack(fill="x", padx=6, pady=5)
-    app.dashboard_search_entry = ctk.CTkEntry(controls, width=240, placeholder_text="Search dashboard tags")
+    app.dashboard_search_entry = ctk.CTkEntry(controls, width=240, placeholder_text="Name, address or comment")
     app.dashboard_search_entry.pack(side="left", padx=3)
     app.dashboard_search_entry.bind("<KeyRelease>", lambda _e: debounce(app, "dashboard_search", 150, lambda: refresh_dashboard_table(app)))
     ctk.CTkButton(controls, text="×", width=30, command=lambda: clear_dashboard_search(app)).pack(side="left", padx=2)
@@ -101,24 +114,42 @@ def create_dashboard_tab(app):
     app.dashboard_count_label = ctk.CTkLabel(controls, text="No dashboard tags")
     app.dashboard_count_label.pack(side="left", padx=8)
 
-    columns = ("status","name","address","type","value","source","alarm","trend")
-    app.dashboard_tag_table = ttk.Treeview(left, columns=columns, show="headings", height=13)
-    widths = {"status":70,"name":170,"address":110,"type":60,"value":90,"source":100,"alarm":90,"trend":70}
+    # Treeview columns remain user-resizable.  Stretch is disabled so Tk does
+    # not squeeze them to the viewport; the horizontal scrollbar handles it.
+    columns = DASHBOARD_COLUMNS
+    table_frame = ctk.CTkFrame(left, fg_color="transparent")
+    table_frame.pack(fill="both", expand=True, padx=4, pady=(0,4))
+    table_frame.grid_rowconfigure(0, weight=1); table_frame.grid_columnconfigure(0, weight=1)
+    app.dashboard_tag_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=13)
+    widths = {"name":190,"address":135,"type":75,"value":105,"status":85,"comment":320,"source":125,"alarm":95,"trend":80}
+    configure_dashboard_headings(app.dashboard_tag_table, lambda column: sort_dashboard(app, column))
     for column in columns:
-        app.dashboard_tag_table.heading(column, text=column.title(), command=lambda col=column: sort_dashboard(app, col))
-        app.dashboard_tag_table.column(column, width=widths[column], anchor="center" if column != "name" else "w")
-    scroll = ttk.Scrollbar(left, command=app.dashboard_tag_table.yview)
-    app.dashboard_tag_table.configure(yscrollcommand=scroll.set)
-    app.dashboard_tag_table.pack(side="left", fill="both", expand=True, padx=(6,0), pady=(0,6)); scroll.pack(side="right", fill="y", pady=(0,6), padx=(0,6))
+        app.dashboard_tag_table.column(column, width=widths[column], minwidth=55, stretch=False, anchor="w" if column in ("name","comment") else "center")
+    y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=app.dashboard_tag_table.yview)
+    x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=app.dashboard_tag_table.xview)
+    app.dashboard_tag_table.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+    app.dashboard_tag_table.grid(row=0,column=0,sticky="nsew"); y_scroll.grid(row=0,column=1,sticky="ns"); x_scroll.grid(row=1,column=0,sticky="ew")
     app.dashboard_tag_table.bind("<<TreeviewSelect>>", lambda _e: refresh_dashboard_detail(app))
     app.dashboard_tag_table.bind("<Double-1>", lambda _e: open_selected_dashboard_tag(app))
+    treeview_tag_comment_tooltip(
+        app.dashboard_tag_table,
+        lambda row: next(
+            (tag for tag in app._dashboard_visible_tags if getattr(app, "_dashboard_row_ids", {}).get(tag.name) == row),
+            None,
+        ),
+    )
     app._dashboard_visible_tags = []
 
     ctk.CTkLabel(right, text="SELECTED TAG", font=("Arial", 12, "bold"), text_color=COLORS["cyan"]).pack(pady=(8,3))
     app.dashboard_detail_labels = {}
-    for field in ("Name","Address","Type / Direction","Effective value","PLC value","Simulated value","Source / Quality","Features","Last update"):
+    for field in ("Name","Data Type","Address","Comment","Effective value","PLC value","Simulated value","Source / Quality","Simulation","Trend","Alarm","Dashboard","Last update"):
         label = ctk.CTkLabel(right, text=f"{field}: —", anchor="w", justify="left")
         label.pack(fill="x", padx=10, pady=1); app.dashboard_detail_labels[field] = label
+        if field == "Name":
+            tag_comment_tooltip(
+                label,
+                lambda: next((tag for tag in getattr(app, "tags", []) if tag.name == getattr(app, "_dashboard_selected_name", None)), None),
+            )
     app.dashboard_detail_indicator = ctk.CTkLabel(right, text="—", font=("Arial", 24, "bold"), text_color=COLORS["neutral"])
     app.dashboard_detail_indicator.pack(pady=5)
     nav = ctk.CTkFrame(right, fg_color="transparent"); nav.pack(fill="x", padx=6, pady=4)
@@ -201,22 +232,39 @@ def refresh_dashboard_table(app):
     brand=connection_brand(app)
     def key(tag):
         runtime=app.tag_runtime.get(tag.name)
-        mapping={"status":bool(runtime and runtime.valid),"name":tag.name.casefold(),"address":tag.address.casefold(),"type":tag.data_type,"value":values[tag.name] if values[tag.name] is not None else float("-inf"),"source":_source(runtime,brand),"alarm":tag.name in alarm_names,"trend":tag.enabled_trend}
+        mapping={"status":bool(runtime and runtime.valid),"name":tag.name.casefold(),"address":tag.address.casefold(),"comment":tag.comment.casefold(),"type":tag.data_type,"value":values[tag.name] if values[tag.name] is not None else float("-inf"),"source":_source(runtime,brand),"alarm":tag.name in alarm_names,"trend":tag.enabled_trend}
         return mapping.get(app._dashboard_sort_column,tag.name.casefold())
     tags=sorted(tags,key=key,reverse=app._dashboard_sort_descending)
-    signature=(app.dashboard_search_entry.get(),app.dashboard_filter_menu.get(),app._dashboard_sort_column,app._dashboard_sort_descending,tuple((tag.name,values[tag.name],_source(app.tag_runtime.get(tag.name),brand),tag.name in alarm_names,tag.enabled_trend) for tag in tags))
-    if signature == getattr(app,"_dashboard_table_signature",None):
-        refresh_dashboard_detail(app); return
-    app._dashboard_table_signature=signature
     selected = app._dashboard_selected_name
-    table = app.dashboard_tag_table; table.delete(*table.get_children()); app._dashboard_visible_tags = tags
-    selected_item = None
+    table = app.dashboard_tag_table
+    row_ids = getattr(app, "_dashboard_row_ids", {})
+    next_id = getattr(app, "_dashboard_next_row_id", 0)
+    row_values = getattr(app, "_dashboard_row_values", {})
+    desired_names = {tag.name for tag in tags}
+    desired_order = tuple(tag.name for tag in tags)
+    order_changed = desired_order != getattr(app, "_dashboard_row_order", ())
+    for name, item in tuple(row_ids.items()):
+        if name not in desired_names:
+            table.delete(item); row_ids.pop(name, None); row_values.pop(name, None)
     for index, tag in enumerate(tags):
         runtime = app.tag_runtime.get(tag.name); valid = bool(runtime and runtime.valid); value = runtime.value if valid else "—"
-        item = table.insert("","end",iid=str(index),values=("● GOOD" if valid else "● BAD",tag.name,tag.address,tag.data_type,value,_source(runtime,brand),"ACTIVE" if tag.name in alarm_names else "Normal","ON" if tag.enabled_trend else "Off"))
-        if tag.name == selected: selected_item = item
-    if selected_item is None and tags: selected_item = "0"
-    if selected_item is not None: table.selection_set(selected_item); app._dashboard_selected_name = tags[int(selected_item)].name
+        displayed=(tag.name,tag.address,tag.data_type,value,"● GOOD" if valid else "● BAD",tag.comment,_source(runtime,brand),"ACTIVE" if tag.name in alarm_names else "Normal","ON" if tag.enabled_trend else "Off")
+        item = row_ids.get(tag.name)
+        if item is None:
+            item = f"dashboard-row-{next_id}"; next_id += 1
+            table.insert("","end",iid=item,values=displayed); row_ids[tag.name]=item; row_values[tag.name]=displayed
+        else:
+            if row_values.get(tag.name) != displayed:
+                table.item(item, values=displayed); row_values[tag.name]=displayed
+            if order_changed:
+                table.move(item,"",index)
+    app._dashboard_row_ids=row_ids; app._dashboard_next_row_id=next_id; app._dashboard_row_values=row_values
+    app._dashboard_row_order=desired_order
+    app._dashboard_visible_tags = tags
+    selected_item = row_ids.get(selected)
+    if selected_item is None and tags:
+        selected_item=row_ids[tags[0].name]; app._dashboard_selected_name=tags[0].name
+    if selected_item is not None and table.selection() != (selected_item,): table.selection_set(selected_item)
     app.dashboard_count_label.configure(text=f"{len(tags)} of {len(get_dashboard_tags(app))} dashboard tags" if tags else "No dashboard-enabled tags")
     refresh_dashboard_detail(app)
 
@@ -224,13 +272,14 @@ def refresh_dashboard_table(app):
 def refresh_dashboard_detail(app):
     selection = app.dashboard_tag_table.selection()
     if not selection: return
-    index = app.dashboard_tag_table.index(selection[0])
-    if index >= len(app._dashboard_visible_tags): return
-    tag = app._dashboard_visible_tags[index]; app._dashboard_selected_name = tag.name
+    item = selection[0]
+    tag = next((candidate for candidate in app._dashboard_visible_tags if getattr(app,"_dashboard_row_ids",{}).get(candidate.name) == item), None)
+    if tag is None: return
+    app._dashboard_selected_name = tag.name
     runtime = app.tag_runtime.get(tag.name); valid = bool(runtime and runtime.valid); effective = runtime.value if valid else "—"
     plc = getattr(app,"_plc_values",{}).get(tag.name,"—"); simulated = getattr(app,"_simulated_values",{}).get(tag.name,"—")
     source = _source(runtime, connection_brand(app)); updated = time.strftime("%H:%M:%S",time.localtime(runtime.updated_at)) if valid and runtime.updated_at else "Never"
-    content = {"Name":tag.name,"Address":tag.address,"Type / Direction":f"{tag.data_type} / {tag.direction}","Effective value":effective,"PLC value":plc,"Simulated value":simulated,"Source / Quality":f"{source} / {'GOOD' if valid else 'BAD'}","Features":f"Sim {tag.enabled_sim} · Trend {tag.enabled_trend} · Alarm {tag.enabled_alarm} · Dashboard {tag.enabled_dashboard}","Last update":updated}
+    content = {"Name":tag.name,"Data Type":f"{tag.data_type} / {tag.direction}","Address":tag.address,"Comment":tag.comment or "—","Effective value":effective,"PLC value":plc,"Simulated value":simulated,"Source / Quality":f"{source} / {'GOOD' if valid else 'BAD'}","Simulation":"On" if tag.enabled_sim else "Off","Trend":"On" if tag.enabled_trend else "Off","Alarm":"On" if tag.enabled_alarm else "Off","Dashboard":"On" if tag.enabled_dashboard else "Off","Last update":updated}
     for field,value in content.items(): app.dashboard_detail_labels[field].configure(text=f"{field}: {value}")
     if tag.data_type == "BOOL" and valid: app.dashboard_detail_indicator.configure(text="● ON" if bool(effective) else "● OFF",text_color=COLORS["green"] if bool(effective) else COLORS["red"])
     else: app.dashboard_detail_indicator.configure(text=str(effective),text_color=COLORS["cyan"] if valid else COLORS["neutral"])
@@ -273,7 +322,7 @@ def _fmt_time(timestamp): return time.strftime("%H:%M:%S",time.localtime(timesta
 def _connection_summary(app,brand):
     if brand=="Simulator":return "Internal Simulator"
     if brand=="Siemens":
-        return f"{connection_value(app,'ip')} · Rack {connection_value(app,'rack')} Slot {connection_value(app,'slot')} DB {connection_value(app,'db_number')}"
+        return f"{connection_value(app,'ip')} · Rack {connection_value(app,'rack')} Slot {connection_value(app,'slot')}"
     return f"{connection_value(app,'ip')} · {brand}"
 
 

@@ -2,6 +2,7 @@ import customtkinter as ctk
 
 from ui.scrollable_frame import SafeScrollableFrame
 from ui.tag_manager import get_feedback_tags
+from ui.table_utils import tag_comment_tooltip
 
 
 def create_feedback_tab(app):
@@ -31,7 +32,7 @@ def create_feedback_tab(app):
     header = ctk.CTkFrame(frame)
     header.pack(fill="x", padx=10, pady=(10, 0))
 
-    headers = ["Estado", "Nome", "Tipo", "Endereço", "Valor"]
+    headers = ["Estado", "Nome", "Tipo", "Endereço", "Comment", "Valor"]
 
     for col, text in enumerate(headers):
         ctk.CTkLabel(
@@ -76,12 +77,15 @@ def create_feedback_row(app, tag):
     )
     led.grid(row=0, column=0, padx=4, pady=6)
 
-    ctk.CTkLabel(row, text=tag.name, width=160).grid(row=0, column=1, padx=4)
+    name_label = ctk.CTkLabel(row, text=tag.name, width=160)
+    name_label.grid(row=0, column=1, padx=4)
+    tag_comment_tooltip(name_label, tag)
     ctk.CTkLabel(row, text=tag.data_type, width=160).grid(row=0, column=2, padx=4)
     ctk.CTkLabel(row, text=tag.address, width=160).grid(row=0, column=3, padx=4)
+    ctk.CTkLabel(row, text=tag.comment, width=200).grid(row=0, column=4, padx=4)
 
     value = ctk.CTkLabel(row, text="---", width=160, font=("Arial", 15, "bold"))
-    value.grid(row=0, column=4, padx=4)
+    value.grid(row=0, column=5, padx=4)
 
     app.feedback_rows.append({
         "tag": tag,

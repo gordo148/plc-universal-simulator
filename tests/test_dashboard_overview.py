@@ -18,6 +18,38 @@ def make_tags(count=4):
     ]
 
 
+def test_dashboard_headings_never_receive_none_and_sortable_callbacks_toggle():
+    class HeadingRecorder:
+        def __init__(self): self.options = {}
+        def heading(self, column, **options):
+            assert options.get("command", "omitted") is not None
+            self.options[column] = options
+
+    tree = HeadingRecorder()
+    clicked = []
+    dashboard_tab.configure_dashboard_headings(tree, clicked.append)
+
+    assert set(tree.options) == set(dashboard_tab.DASHBOARD_COLUMNS)
+    assert {
+        column for column, options in tree.options.items() if "command" in options
+    } == set(dashboard_tab.DASHBOARD_SORTABLE_COLUMNS)
+    expected_columns = list(dashboard_tab.DASHBOARD_SORTABLE_COLUMNS)
+    for column in expected_columns:
+        tree.options[column]["command"]()
+    assert clicked == expected_columns
+
+
+def test_dashboard_sort_click_alternates_ascending_and_descending(monkeypatch):
+    app = SimpleNamespace(_dashboard_sort_column="name", _dashboard_sort_descending=False)
+    monkeypatch.setattr(dashboard_tab, "refresh_dashboard_table", lambda _app: None)
+    dashboard_tab.sort_dashboard(app, "name")
+    assert app._dashboard_sort_descending is True
+    dashboard_tab.sort_dashboard(app, "name")
+    assert app._dashboard_sort_descending is False
+    dashboard_tab.sort_dashboard(app, "address")
+    assert (app._dashboard_sort_column, app._dashboard_sort_descending) == ("address", False)
+
+
 def test_summary_card_counts_and_online_offline_state():
     service=SimpleNamespace(
         is_connected=lambda:False,
@@ -106,10 +138,12 @@ def test_unchanged_table_signature_skips_tree_rebuild(monkeypatch):
     tag=TagDefinition("D","BOOL","Input","M0",enabled_dashboard=True)
     runtime=RuntimeTagCache();runtime.sync([tag])
     class Table:
-        def __init__(self):self.rows=[];self.deleted=0;self.selected=()
+        def __init__(self):self.rows=[];self.deleted=0;self.selected=();self.updated=0
         def get_children(self):return tuple(range(len(self.rows)))
         def delete(self,*_items):self.deleted+=1;self.rows=[]
         def insert(self,*_args,**kwargs):self.rows.append(kwargs["values"]);return str(len(self.rows)-1)
+        def item(self,*_args,**_kwargs):self.updated+=1
+        def move(self,*_args):pass
         def selection(self):return self.selected
         def selection_set(self,item):self.selected=(item,)
         def index(self,item):return int(item)
@@ -125,4 +159,5 @@ def test_unchanged_table_signature_skips_tree_rebuild(monkeypatch):
     monkeypatch.setattr(dashboard_tab,"refresh_dashboard_detail",lambda _app:None)
     dashboard_tab.refresh_dashboard_table(app)
     dashboard_tab.refresh_dashboard_table(app)
-    assert app.dashboard_tag_table.deleted == 1
+    assert app.dashboard_tag_table.deleted == 0
+    assert app.dashboard_tag_table.updated == 0

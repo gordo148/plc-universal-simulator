@@ -23,6 +23,7 @@ def filter_tags(tags, query):
         tag for tag in tags
         if query in tag.name.casefold()
         or query in tag.address.casefold()
+        or query in getattr(tag, "comment", "").casefold()
         or query in tag.data_type.casefold()
     ]
 
@@ -104,13 +105,44 @@ class ToolTip:
 
     def show(self, _event=None):
         if self.window is not None: return
+        text = self.text() if callable(self.text) else self.text
+        if not text: return
         import tkinter as tk
         self.window = tk.Toplevel(self.widget)
         self.window.wm_overrideredirect(True)
         self.window.wm_geometry(f"+{self.widget.winfo_rootx() + 12}+{self.widget.winfo_rooty() + 28}")
-        tk.Label(self.window, text=self.text, bg="#263238", fg="white", relief="solid", borderwidth=1, padx=6, pady=3).pack()
+        tk.Label(self.window, text=text, bg="#263238", fg="white", relief="solid", borderwidth=1, padx=6, pady=3, wraplength=420, justify="left").pack()
 
     def hide(self, _event=None):
         if self.window is not None:
             self.window.destroy()
             self.window = None
+
+
+def tag_comment_tooltip(widget, tag_or_resolver):
+    """Attach a tooltip that exposes a tag comment without changing its label."""
+    def text():
+        tag = tag_or_resolver() if callable(tag_or_resolver) else tag_or_resolver
+        if tag is None or not getattr(tag, "comment", ""):
+            return ""
+        return f"Name: {tag.name}\nAddress: {tag.address}\nComment: {tag.comment}"
+    return ToolTip(widget, text)
+
+
+def treeview_tag_comment_tooltip(tree, resolver):
+    """Show the comment for the Treeview row currently under the pointer."""
+    state = {"row": ""}
+    tree.bind(
+        "<Enter>",
+        lambda event: state.update(row=tree.identify_row(event.y)),
+        add="+",
+    )
+    tree.bind(
+        "<Motion>",
+        lambda event: state.update(row=tree.identify_row(event.y)),
+        add="+",
+    )
+    return tag_comment_tooltip(
+        tree,
+        lambda: resolver(state["row"]) if state["row"] else None,
+    )

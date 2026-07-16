@@ -86,7 +86,7 @@ def test_large_mixed_projects_stage_without_data_loss(count):
 
 def test_brand_switching_revalidates_existing_tags():
     tags = [
-        TagDefinition("SiemensTag", "BOOL", "Input", "DBX0.0"),
+        TagDefinition("SiemensTag", "BOOL", "Input", "%DB100.DBX0.0"),
         TagDefinition("SchneiderTag", "BOOL", "Input", "%M0"),
         TagDefinition("ModbusTag", "INT", "Input", "0"),
         TagDefinition("RockwellTag", "REAL", "Input", "Tank_Level"),
@@ -119,10 +119,10 @@ def test_brand_switching_revalidates_existing_tags():
         (CSV_HEADER + "Tag,STRING,Input,A,1,1,0,0\n", "data_type inválido"),
         (CSV_HEADER + "Tag,BOOL,Unknown,A,1,1,0,0\n", "direction inválida"),
         (
-            CSV_HEADER + "Tag,BOOL,Input,DBX0.0,maybe,1,0,0\n",
+            CSV_HEADER + "Tag,BOOL,Input,%DB100.DBX0.0,maybe,1,0,0\n",
             "booleano inválido",
         ),
-        (CSV_HEADER + "Tag,REAL,Input,DBW20,1,1,0,0\n", "REAL Siemens"),
+        (CSV_HEADER + "Tag,REAL,Input,%DB100.DBW20,1,1,0,0\n", "REAL requires"),
     ],
 )
 def test_invalid_csv_variants_are_rejected(tmp_path, body, message):
@@ -137,8 +137,8 @@ def test_duplicate_csv_tags_are_rejected_before_application(tmp_path):
     path = tmp_path / "duplicates.csv"
     path.write_text(
         CSV_HEADER
-        + "Motor,BOOL,Input,DBX0.0,1,1,0,0\n"
-        + " motor ,BOOL,Input,DBX0.1,1,1,0,0\n",
+        + "Motor,BOOL,Input,%DB100.DBX0.0,1,1,0,0\n"
+        + " motor ,BOOL,Input,%DB100.DBX0.1,1,1,0,0\n",
         encoding="utf-8",
     )
     tags = tag_manager.read_tags_csv(path, "Siemens")

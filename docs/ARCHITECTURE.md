@@ -96,7 +96,8 @@ surface.
 
 | Driver | Protocol and mapping |
 | --- | --- |
-| `siemens_s7.py` | Siemens S7: DB bits, words, and REAL double words |
+| `siemens_address.py` | Central Siemens absolute-address parser and type validation |
+| `siemens_s7.py` | Siemens S7 transport for DB, M, I and Q areas |
 | `schneider_modbus.py` | Schneider Modbus TCP coils and holding registers |
 | `modbus_tcp.py` | Generic Modbus TCP using the shared Modbus transport |
 | `rockwell_enip.py` | Rockwell EtherNet/IP symbolic tags via pycomm3 |
@@ -154,7 +155,7 @@ path as physical PLCs.
 
 Address validation and suggestions are brand-aware in `ui/tag_manager.py`:
 
-- Siemens: `DBX0.0`, `DBW10`, `DBD20`
+- Siemens: `%DB14.DBX0.0`, `%DB20.DBW10`, `%MD20`, `%I0.0`, `%QW10`
 - Schneider: `%M0`, `%MW10`
 - Generic Modbus TCP: `%M0`/`M0`/`0`, `%MW0`/`MW0`/`0`
 - Rockwell: symbolic tag name; the UI derives address from tag name
@@ -181,8 +182,11 @@ destination. Runtime values and internal simulator memory are excluded.
 
 ## CSV interchange
 
-Universal CSV files contain tag definitions and feature flags. Vendor importers
-normalize Siemens TIA Portal and Schneider exports into `TagDefinition` objects.
+Universal CSV files contain tag definitions, an optional human-readable
+`Comment`, and feature flags. Vendor importers preserve supported comment
+columns while normalizing Siemens TIA Portal and Schneider exports into
+`TagDefinition` objects. Comments are persisted and searchable presentation
+metadata only; drivers never use them for PLC addressing or communication.
 Parsing completes before imported tags are applied, preventing partial imports.
 
 ## Plugin readiness

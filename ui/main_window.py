@@ -26,6 +26,7 @@ from core.version import (
 )
 from services.plc_service import PLCService
 from services.settings_service import ApplicationSettings
+from services.storage_paths import ensure_storage_directories
 
 from ui.header import (
     create_header, SCHNEIDER_MODELS, connection_brand, connection_value,
@@ -140,7 +141,12 @@ def get_operating_system_name():
 
 class PLCSimulator:
     def __init__(self):
-        os.makedirs("configs", exist_ok=True)
+        try:
+            ensure_storage_directories()
+        except OSError:
+            # File operations will still report their normal error if the
+            # application directory is genuinely not writable.
+            LOGGER.warning("Unable to prepare user storage directories", exc_info=True)
 
         self.settings = ApplicationSettings.load()
         ctk.set_appearance_mode(
@@ -378,7 +384,7 @@ class PLCSimulator:
         brand = connection_brand(self)
         options = {}
         if brand == "Siemens":
-            options = {"rack": connection_value(self, "rack"), "slot": connection_value(self, "slot"), "db_number": connection_value(self, "db_number")}
+            options = {"rack": connection_value(self, "rack"), "slot": connection_value(self, "slot")}
         elif brand in ("Schneider", "Modbus TCP"):
             options = {"port": connection_value(self, "port"), "slave_id": connection_value(self, "slave_id")}
         elif brand == "Omron":
@@ -622,6 +628,8 @@ class PLCSimulator:
             current_out if current_out in output_names
             else (output_names[0] if output_names else "")
         )
+        from ui.pid_tab import update_pid_comment_labels
+        update_pid_comment_labels(self)
 
     def update_digital_name(self, index):
         item = self.digital_controls[index]
@@ -748,7 +756,7 @@ class PLCSimulator:
         """Write one analog tag without depending on the selected editor row."""
         if self.is_rebuilding or not tag.enabled_sim:
             return None
-        value = int(value) if tag.data_type == "INT" else float(value)
+        value = float(value) if tag.data_type == "REAL" else int(value)
 
         if not self.is_online():
             self.tag_runtime.update(

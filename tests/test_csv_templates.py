@@ -1,7 +1,7 @@
 import csv
 from pathlib import Path
 
-from ui.tag_manager import TAG_CSV_FIELDS
+from ui.tag_manager import TAG_CSV_FIELDS, TAG_CSV_HEADERS
 
 
 TEMPLATE_NAMES = [
@@ -23,7 +23,8 @@ def test_csv_templates_exist_and_have_required_columns():
 
         with template_path.open(newline="", encoding="utf-8") as template_file:
             reader = csv.DictReader(template_file)
-            assert reader.fieldnames == TAG_CSV_FIELDS
+            expected = ["Name", "Address", "Data Type", "Direction", "Sim Enabled", "Trend Enabled", "Alarm Enabled", "Dashboard Enabled", "Comment"] if template_name == "siemens_tags_template.csv" else [*TAG_CSV_FIELDS[:-1], "Comment"]
+            assert reader.fieldnames == expected
 
 
 def test_universal_template_contains_required_examples():

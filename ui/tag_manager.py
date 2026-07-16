@@ -8,9 +8,11 @@ import shutil
 import sys
 from tkinter import filedialog, messagebox, ttk
 
-from core.tag_model import Tag
+from core.tag_model import SIEMENS_NUMERIC_TYPES, Tag
+from drivers.siemens_address import SiemensAddressError, parse_siemens_address, validate_siemens_data_type
 from ui.header import connection_brand
-from ui.table_utils import clear_entry, debounce
+from services.storage_paths import csv_directory
+from ui.table_utils import clear_entry, debounce, treeview_tag_comment_tooltip
 
 
 LOGGER = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ COL_WIDTHS = {
     "type": 90,
     "direction": 120,
     "address": 140,
+    "comment": 220,
     "sim": 70,
     "trend": 70,
     "alarm": 70,
@@ -63,7 +66,30 @@ TAG_CSV_FIELDS = [
     "enabled_trend",
     "enabled_alarm",
     "enabled_dashboard",
+    "comment",
 ]
+TAG_CSV_HEADERS = {
+    "name": "Name", "data_type": "Data Type", "direction": "Direction",
+    "address": "Address", "enabled_sim": "Sim Enabled",
+    "enabled_trend": "Trend Enabled", "enabled_alarm": "Alarm Enabled",
+    "enabled_dashboard": "Dashboard Enabled", "comment": "Comment",
+}
+TAG_CSV_HEADER_ALIASES = {
+    "name": "name", "data type": "data_type", "datatype": "data_type",
+    "data_type": "data_type", "direction": "direction", "address": "address",
+    "sim enabled": "enabled_sim", "enabled_sim": "enabled_sim",
+    "trend enabled": "enabled_trend", "enabled_trend": "enabled_trend",
+    "alarm enabled": "enabled_alarm", "enabled_alarm": "enabled_alarm",
+    "dashboard enabled": "enabled_dashboard", "enabled_dashboard": "enabled_dashboard",
+    "comment": "comment", "comments": "comment", "description": "comment",
+    "tag comment": "comment", "comentario": "comment", "comentários": "comment",
+    "descrição": "comment",
+}
+COMMENT_HEADER_PRIORITY = (
+    "comment", "comments", "description", "tag comment", "comentario",
+    "comentários", "descrição",
+)
+REQUIRED_TAG_CSV_FIELDS = [field for field in TAG_CSV_FIELDS if field != "comment"]
 
 TRUE_CSV_VALUES = {"1", "true", "yes", "on"}
 FALSE_CSV_VALUES = {"", "0", "false", "no", "off"}
@@ -98,7 +124,7 @@ def create_tag_manager_tab(app):
 
     app.tag_type_menu = ctk.CTkOptionMenu(
         controls,
-        values=["BOOL", "INT", "REAL"],
+        values=["BOOL", "BYTE", "WORD", "INT", "DWORD", "DINT", "REAL"],
         command=lambda _value: update_tag_address_context(app),
         width=90
     )
@@ -115,14 +141,19 @@ def create_tag_manager_tab(app):
     app.tag_direction_menu.pack(side="left", padx=5)
 
     app.tag_address_entry = ctk.CTkEntry(controls, width=140)
-    app.tag_address_entry.insert(0, "DBX0.0")
+    app.tag_address_entry.insert(0, "%DB1.DBX0.0")
     app.tag_address_entry.pack(side="left", padx=5)
     app.tag_address_manual_edit = False
-    app.tag_last_suggested_address = "DBX0.0"
+    app.tag_last_suggested_address = "%DB1.DBX0.0"
     app.tag_address_entry.bind(
         "<KeyRelease>",
         lambda _event: on_tag_address_edited(app),
     )
+
+    app.tag_comment_entry = ctk.CTkEntry(
+        controls, width=220, placeholder_text="Comment (optional)"
+    )
+    app.tag_comment_entry.pack(side="left", padx=5)
     app.tag_address_entry.bind(
         "<FocusOut>",
         lambda _event: on_tag_address_edited(app),
@@ -214,7 +245,7 @@ def create_tag_manager_tab(app):
     ctk.CTkLabel(search_row, text="Search:").pack(side="left", padx=(4, 6))
     app.tag_search_entry = ctk.CTkEntry(
         search_row, width=320,
-        placeholder_text="Name, address, type or direction",
+        placeholder_text="Name, address, comment, type or direction",
     )
     app.tag_search_entry.pack(side="left", padx=(0, 4))
     app.tag_search_clear_button = ctk.CTkButton(
@@ -240,11 +271,11 @@ def create_tag_manager_tab(app):
     )
     table_frame.pack(fill="both", expand=True, padx=6, pady=(3, 6))
     columns = (
-        "name", "data_type", "direction", "address", "enabled_sim",
+        "name", "data_type", "direction", "address", "comment", "enabled_sim",
         "enabled_trend", "enabled_alarm", "enabled_dashboard", "delete",
     )
     headings = (
-        "Nome", "Tipo", "Direção", "Endereço", "Sim", "Trend",
+        "Nome", "Tipo", "Direção", "Endereço", "Comment", "Sim", "Trend",
         "Alarme", "Dash", "Ação",
     )
     control_row = ttk.Frame(table_frame, style="TagManager.Controls.TFrame")
@@ -258,10 +289,10 @@ def create_tag_manager_tab(app):
     control_row.grid_columnconfigure(len(columns), minsize=16, weight=0)
     app.tag_master_checkboxes = {}
     for column, option in (
-        (4, "enabled_sim"),
-        (5, "enabled_trend"),
-        (6, "enabled_alarm"),
-        (7, "enabled_dashboard"),
+        (6, "enabled_sim"),
+        (7, "enabled_trend"),
+        (8, "enabled_alarm"),
+        (9, "enabled_dashboard"),
     ):
         checkbox = ttk.Checkbutton(
             control_row,
@@ -295,6 +326,11 @@ def create_tag_manager_tab(app):
     app.tag_table.bind(
         "<ButtonRelease-1>", lambda event: on_tag_table_click(app, event),
     )
+    app.tag_table.bind("<Double-1>", lambda event: edit_tag_comment(app, event), add="+")
+    treeview_tag_comment_tooltip(
+        app.tag_table,
+        lambda row: app.tags[int(row)] if row and int(row) < len(app.tags) else None,
+    )
 
     refresh_tag_table(app)
     update_tag_address_context(app)
@@ -309,6 +345,7 @@ def filter_tag_collection(tags, query):
         tag for tag in tags
         if query in tag.name.casefold()
         or query in tag.address.casefold()
+        or query in getattr(tag, "comment", "").casefold()
         or query in tag.data_type.casefold()
         or query in tag.direction.casefold()
     ]
@@ -485,7 +522,8 @@ def add_tag(app):
         enabled_sim=True if app.tag_direction_menu.get() == "Input" else False,
         enabled_trend=True,
         enabled_alarm=False,
-        enabled_dashboard=True
+        enabled_dashboard=True,
+        comment=app.tag_comment_entry.get().strip(),
     )
 
     app.tags.append(tag)
@@ -493,6 +531,37 @@ def add_tag(app):
     refresh_tag_table(app)
     app.tag_address_manual_edit = False
     app.generate_signals()
+
+
+def selected_tag(app):
+    selected = app.tag_table.selection() if hasattr(app, "tag_table") else ()
+    if not selected:
+        return None
+    try:
+        return app.tags[int(selected[0])]
+    except (IndexError, TypeError, ValueError):
+        return None
+
+
+def edit_tag_comment(app, event):
+    """Edit the Comment cell in-place through a small modal prompt."""
+    if app.tag_table.identify_column(event.x) != "#5":
+        return
+    tag = selected_tag(app)
+    if tag is None:
+        return
+    from tkinter import simpledialog
+    value = simpledialog.askstring(
+        "Edit tag comment", f"Comment for {tag.name}:",
+        initialvalue=tag.comment, parent=app.tag_table,
+    )
+    if value is None:
+        return
+    tag.comment = str(value)
+    mark_project_modified(app)
+    refresh_tag_table(app)
+    if hasattr(app, "generate_signals"):
+        app.generate_signals()
 
 
 def normalize_and_validate_tag_names(tags):
@@ -518,11 +587,11 @@ def validate_tag_address(brand, data_type, address):
     address = str(address).strip().upper()
 
     if brand == "Siemens":
-        patterns = {
-            "BOOL": (r"DBX\d+\.[0-7]", "BOOL Siemens requer DBX byte.bit (ex.: DBX0.0)"),
-            "INT": (r"DBW\d+", "INT Siemens requer DBW byte (ex.: DBW0)"),
-            "REAL": (r"DBD\d+", "REAL Siemens requer DBD byte (ex.: DBD0)"),
-        }
+        try:
+            validate_siemens_data_type(data_type, address)
+        except SiemensAddressError as error:
+            return False, str(error)
+        return True, "Endereço Siemens válido"
     elif brand == "Schneider":
         patterns = {
             "BOOL": (r"%M\d+", "BOOL Schneider requer %M index (ex.: %M0)"),
@@ -617,6 +686,11 @@ def resolve_tag_address(brand, tag_name, entered_address):
         return str(tag_name).strip()
     if str(brand).strip() == "Simulator":
         return str(entered_address).strip()
+    if str(brand).strip() == "Siemens":
+        try:
+            return parse_siemens_address(entered_address).normalized_address
+        except SiemensAddressError:
+            return str(entered_address).strip().upper()
     return str(entered_address).strip().upper()
 
 
@@ -698,7 +772,7 @@ def update_tag_address_context(app):
 def suggest_address(brand, data_type, tags, tag_name=None):
     brand = str(brand).strip()
     data_type = str(data_type).strip().upper()
-    if data_type not in ["BOOL", "INT", "REAL"]:
+    if data_type not in ["BOOL", "BYTE", "WORD", "INT", "DWORD", "DINT", "REAL"]:
         raise ValueError(f"Tipo de dados não suportado: {data_type}")
 
     if brand == "Siemens":
@@ -710,11 +784,11 @@ def suggest_address(brand, data_type, tags, tag_name=None):
                 if byte_index not in occupied_bytes:
                     for bit_index in range(8):
                         if (byte_index, bit_index) not in occupied_bits:
-                            return f"DBX{byte_index}.{bit_index}"
+                            return f"%DB1.DBX{byte_index}.{bit_index}"
                 byte_index += 1
 
-        size = 2 if data_type == "INT" else 4
-        prefix = "DBW" if data_type == "INT" else "DBD"
+        size = {"BYTE": 1, "WORD": 2, "INT": 2, "DWORD": 4, "DINT": 4, "REAL": 4}[data_type]
+        prefix = {1: "DBB", 2: "DBW", 4: "DBD"}[size]
         candidate = 0
         while True:
             byte_range = range(candidate, candidate + size)
@@ -722,7 +796,7 @@ def suggest_address(brand, data_type, tags, tag_name=None):
                 not any(byte in occupied_bytes for byte in byte_range)
                 and not any(byte == bit_byte for byte in byte_range for bit_byte, _ in occupied_bits)
             ):
-                return f"{prefix}{candidate}"
+                return f"%DB1.{prefix}{candidate}"
             candidate += size
 
     if brand in ("Schneider", "Modbus TCP"):
@@ -779,15 +853,13 @@ def _siemens_occupancy(tags):
         if not valid:
             continue
 
-        address = tag.address.strip().upper()
+        address = parse_siemens_address(tag.address)
+        if address.area != "DB" or address.db_number != 1:
+            continue
         if tag.data_type == "BOOL":
-            byte_text, bit_text = address.removeprefix("DBX").split(".")
-            occupied_bits.add((int(byte_text), int(bit_text)))
+            occupied_bits.add((address.byte_offset, address.bit_offset))
         else:
-            prefix = "DBW" if tag.data_type == "INT" else "DBD"
-            byte_index = int(address.removeprefix(prefix))
-            size = 2 if tag.data_type == "INT" else 4
-            occupied_bytes.update(range(byte_index, byte_index + size))
+            occupied_bytes.update(range(address.byte_offset, address.byte_offset + address.size_bytes))
 
     return occupied_bytes, occupied_bits
 
@@ -867,7 +939,7 @@ def _build_csv_header_map(fieldnames):
         if not normalized or normalized.lower().startswith("unnamed"):
             continue
 
-        key = normalized.lower()
+        key = TAG_CSV_HEADER_ALIASES.get(normalized.lower(), normalized.lower())
         detected_columns.append(normalized)
         header_map.setdefault(key, header)
 
@@ -916,7 +988,7 @@ def read_tags_csv(file_path, brand=None):
         headers, rows = _read_normalized_csv_rows(file)
         header_map, detected_columns = _build_csv_header_map(headers)
         missing_fields = [
-            field for field in TAG_CSV_FIELDS
+            field for field in REQUIRED_TAG_CSV_FIELDS
             if field not in header_map
         ]
         if missing_fields:
@@ -924,15 +996,24 @@ def read_tags_csv(file_path, brand=None):
                 missing_fields,
                 detected_columns,
             ))
-        if len(headers) != len(TAG_CSV_FIELDS):
+        comment_headers = [
+            header for header in headers
+            if _normalize_csv_header(header).casefold() in COMMENT_HEADER_PRIORITY
+        ]
+        allowed_header_count = len(REQUIRED_TAG_CSV_FIELDS) + len(comment_headers)
+        if len(headers) != allowed_header_count:
             raise ValueError(
                 "CSV format invalid. Normalized rows must contain exactly "
-                f"{len(TAG_CSV_FIELDS)} required fields."
+                f"{len(REQUIRED_TAG_CSV_FIELDS)} required fields and optional Comment."
             )
 
         header_indexes = {
-            field: headers.index(header_map[field]) for field in TAG_CSV_FIELDS
+            field: headers.index(header_map[field]) for field in REQUIRED_TAG_CSV_FIELDS
         }
+        comment_column = next((
+            header for candidate in COMMENT_HEADER_PRIORITY for header in headers
+            if _normalize_csv_header(header).casefold() == candidate
+        ), None)
 
         direction_names = {
             "input": "Input",
@@ -942,10 +1023,10 @@ def read_tags_csv(file_path, brand=None):
         }
 
         for line_number, row in rows:
-            if len(row) != len(TAG_CSV_FIELDS):
+            if len(row) != allowed_header_count:
                 raise ValueError(
                     f"linha {line_number}: expected exactly "
-                    f"{len(TAG_CSV_FIELDS)} fields"
+                    f"{allowed_header_count} fields"
                 )
             if not any(str(value or "").strip() for value in row):
                 continue
@@ -953,11 +1034,15 @@ def read_tags_csv(file_path, brand=None):
             try:
                 values = {
                     field: str(row[header_indexes[field]] or "").strip()
-                    for field in TAG_CSV_FIELDS
+                    for field in REQUIRED_TAG_CSV_FIELDS
                 }
+                values["comment"] = str(row[headers.index(comment_column)] or "") if comment_column else ""
 
                 data_type = values["data_type"].upper()
-                if data_type not in ["BOOL", "INT", "REAL"]:
+                allowed_types = ["BOOL", "INT", "REAL"]
+                if brand == "Siemens":
+                    allowed_types = ["BOOL", "BYTE", "WORD", "INT", "DWORD", "DINT", "REAL"]
+                if data_type not in allowed_types:
                     raise ValueError(
                         f"data_type inválido: {values['data_type']}"
                     )
@@ -982,6 +1067,8 @@ def read_tags_csv(file_path, brand=None):
                     )
                     if not valid:
                         raise ValueError(validation_message)
+                    if brand == "Siemens":
+                        address = parse_siemens_address(address).normalized_address
 
                 tags.append(Tag(
                     name=values["name"],
@@ -992,28 +1079,38 @@ def read_tags_csv(file_path, brand=None):
                     enabled_trend=parse_csv_bool(values["enabled_trend"]),
                     enabled_alarm=parse_csv_bool(values["enabled_alarm"]),
                     enabled_dashboard=parse_csv_bool(values["enabled_dashboard"]),
+                    comment=values["comment"],
                 ))
             except ValueError as error:
-                raise ValueError(f"linha {line_number}: {error}") from error
+                row_name = locals().get("values", {}).get("name", "")
+                row_address = locals().get("values", {}).get("address", "")
+                context = f' Tag "{row_name}"; address "{row_address}".' if row_name or row_address else ""
+                raise ValueError(f"Row {line_number}:{context} {error}") from error
 
     return tags
 
 
 def write_tags_csv(file_path, tags):
     with open(file_path, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=TAG_CSV_FIELDS)
+        writer = csv.DictWriter(file, fieldnames=list(TAG_CSV_HEADERS.values()))
         writer.writeheader()
 
         for tag in tags:
+            address = tag.address
+            try:
+                address = parse_siemens_address(address).normalized_address
+            except SiemensAddressError:
+                pass
             writer.writerow({
-                "name": tag.name,
-                "data_type": tag.data_type,
-                "direction": tag.direction,
-                "address": tag.address,
-                "enabled_sim": "1" if tag.enabled_sim else "0",
-                "enabled_trend": "1" if tag.enabled_trend else "0",
-                "enabled_alarm": "1" if tag.enabled_alarm else "0",
-                "enabled_dashboard": "1" if tag.enabled_dashboard else "0",
+                "Name": tag.name,
+                "Data Type": tag.data_type,
+                "Direction": tag.direction,
+                "Address": address,
+                "Sim Enabled": "1" if tag.enabled_sim else "0",
+                "Trend Enabled": "1" if tag.enabled_trend else "0",
+                "Alarm Enabled": "1" if tag.enabled_alarm else "0",
+                "Dashboard Enabled": "1" if tag.enabled_dashboard else "0",
+                "Comment": tag.comment,
             })
 
 
@@ -1046,6 +1143,7 @@ def read_tia_tags_csv(file_path):
             ["logical address"],
         )
         address_column = _find_import_column(header_map, ["address"])
+        comment_columns = _find_import_columns(header_map, list(COMMENT_HEADER_PRIORITY))
 
         missing = []
         if name_column is None:
@@ -1088,7 +1186,7 @@ def read_tia_tags_csv(file_path):
                 if data_type is None:
                     raise ValueError(f"Data Type TIA não suportado: {tia_type}")
 
-                address = raw_address.upper().removeprefix("%")
+                address = raw_address
                 valid, message = validate_tag_address(
                     "Siemens",
                     data_type,
@@ -1096,6 +1194,8 @@ def read_tia_tags_csv(file_path):
                 )
                 if not valid:
                     raise ValueError(message)
+                address = parse_siemens_address(address).normalized_address
+                comment = _first_import_value(row, comment_columns)
 
                 tags.append(Tag(
                     name=name,
@@ -1106,6 +1206,7 @@ def read_tia_tags_csv(file_path):
                     enabled_trend=False,
                     enabled_alarm=False,
                     enabled_dashboard=True,
+                    comment=comment,
                 ))
             except ValueError as error:
                 raise ValueError(f"linha {line_number}: {error}") from error
@@ -1177,6 +1278,7 @@ def read_schneider_tags_csv(file_path):
             ["data type", "datatype", "type"],
         )
         address_column = _find_import_column(header_map, ["address"])
+        comment_columns = _find_import_columns(header_map, list(COMMENT_HEADER_PRIORITY))
 
         missing = []
         if not name_columns:
@@ -1207,6 +1309,7 @@ def read_schneider_tags_csv(file_path):
                 address = str(
                     row.get(address_column, "") or ""
                 ).strip().upper()
+                comment = _first_import_value(row, comment_columns)
 
                 if not name:
                     raise ValueError("Name/Variable vazio")
@@ -1235,6 +1338,7 @@ def read_schneider_tags_csv(file_path):
                     enabled_trend=False,
                     enabled_alarm=False,
                     enabled_dashboard=True,
+                    comment=comment,
                 ))
             except ValueError as error:
                 raise ValueError(f"linha {line_number}: {error}") from error
@@ -1244,7 +1348,7 @@ def read_schneider_tags_csv(file_path):
 
 def import_tags_csv(app):
     file_path = filedialog.askopenfilename(
-        initialdir="configs",
+        initialdir=csv_directory(),
         filetypes=[("CSV files", "*.csv")],
     )
     if not file_path:
@@ -1270,7 +1374,7 @@ def import_tags_csv(app):
 
 def import_tia_csv(app):
     file_path = filedialog.askopenfilename(
-        initialdir="configs",
+        initialdir=csv_directory(),
         filetypes=[("TIA CSV files", "*.csv"), ("All files", "*.*")],
     )
     if not file_path:
@@ -1301,7 +1405,7 @@ def import_tia_csv(app):
 
 def import_schneider_csv(app):
     file_path = filedialog.askopenfilename(
-        initialdir="configs",
+        initialdir=csv_directory(),
         filetypes=[
             ("Schneider CSV files", "*.csv"),
             ("All files", "*.*"),
@@ -1459,7 +1563,7 @@ def apply_imported_tags(
 
 def export_tags_csv(app):
     file_path = filedialog.asksaveasfilename(
-        initialdir="configs",
+        initialdir=csv_directory(),
         defaultextension=".csv",
         filetypes=[("CSV files", "*.csv")],
         initialfile="tags.csv",
@@ -1494,6 +1598,7 @@ def get_csv_template_path(brand):
 def export_csv_template(app):
     template_path = get_csv_template_path(connection_brand(app))
     destination = filedialog.asksaveasfilename(
+        initialdir=csv_directory(),
         defaultextension=".csv",
         filetypes=[("CSV files", "*.csv")],
         initialfile=template_path.name,
@@ -1582,7 +1687,7 @@ def create_tag_row(app, tag, index=None):
     iid = str(index if index is not None else len(app.tag_table.get_children()))
     app.tag_table.insert("", "end", iid=iid, values=(
         tag.name, tag.data_type, tag.direction,
-        tag.address if address_valid else f"⚠ {tag.address}",
+        tag.address if address_valid else f"⚠ {tag.address}", tag.comment,
         marker(tag.enabled_sim), marker(tag.enabled_trend),
         marker(tag.enabled_alarm), marker(tag.enabled_dashboard), "Eliminar",
     ), tags=("even" if int(iid) % 2 == 0 else "odd",))
@@ -1602,15 +1707,15 @@ def on_tag_table_click(app, event):
 
     column_number = int(column[1:])
     flag_fields = {
-        5: "enabled_sim", 6: "enabled_trend",
-        7: "enabled_alarm", 8: "enabled_dashboard",
+        6: "enabled_sim", 7: "enabled_trend",
+        8: "enabled_alarm", 9: "enabled_dashboard",
     }
     if column_number in flag_fields:
         field = flag_fields[column_number]
         value = not getattr(tag, field)
         set_tag_flag(app, tag, field, value)
         table.set(item, field, "✓" if value else "—")
-    elif column_number == 9:
+    elif column_number == 10:
         delete_tag(app, tag)
 
 
@@ -1659,7 +1764,7 @@ def set_all_tag_option(app, option_name, enabled):
         else:
             from ui.analog_profiles import canonical_analog_profile
             for tag in app.tags:
-                if tag.direction == "Input" and tag.data_type in ("INT", "REAL"):
+                if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES:
                     canonical_analog_profile(app, tag)
             manager = getattr(app, "analog_simulation_manager", None)
             if manager is not None:
@@ -1683,7 +1788,7 @@ def _set_manual_analog_profiles_to_ramp(app):
     from ui.analog_profiles import ensure_dynamic_analog_profiles
     analog_tags = [
         tag for tag in app.tags
-        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+        if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES
     ]
     if getattr(app, "_analog_structure_initialized", False):
         from ui.analog_tab import (
@@ -1710,7 +1815,7 @@ def set_tag_flag(app, tag, field, value):
     if (
         field == "enabled_sim"
         and tag.direction == "Input"
-        and tag.data_type in ("INT", "REAL")
+        and tag.data_type in SIEMENS_NUMERIC_TYPES
     ):
         from ui.analog_profiles import canonical_analog_profile
         canonical_analog_profile(app, tag)
@@ -1819,7 +1924,7 @@ def get_dashboard_tags(app):
 def get_numeric_tags(app):
     return [
         tag for tag in getattr(app, "tags", [])
-        if tag.data_type in ["INT", "REAL"]
+        if tag.data_type in SIEMENS_NUMERIC_TYPES
         and is_tag_compatible(app, tag)
     ]
 

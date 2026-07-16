@@ -1,8 +1,8 @@
-name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard
-BOOL_Input,BOOL,Input,,1,1,0,1
-INT_Input,INT,Input,,1,1,0,1
-REAL_Input,REAL,Input,,1,1,0,1
-BOOL_Feedback,BOOL,Feedback,,0,1,0,1
-INT_Feedback,INT,Feedback,,0,1,0,1
-REAL_Feedback,REAL,Feedback,,0,1,0,1
-PID_OUT,REAL,Internal,,0,1,0,1
+name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard,Comment
+BOOL_Input,BOOL,Input,,1,1,0,1,Start command
+INT_Input,INT,Input,,1,1,0,1,Production setpoint
+REAL_Input,REAL,Input,,1,1,0,1,Temperature setpoint
+BOOL_Feedback,BOOL,Feedback,,0,1,0,1,Running feedback
+INT_Feedback,INT,Feedback,,0,1,0,1,Production counter
+REAL_Feedback,REAL,Feedback,,0,1,0,1,Measured temperature
+PID_OUT,REAL,Internal,,0,1,0,1,PID controller output

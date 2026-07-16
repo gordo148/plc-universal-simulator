@@ -25,7 +25,7 @@ def test_save_and_load_project_headlessly(tmp_path, project_app):
 
 def test_5000_tags_are_serialized_and_written_once(tmp_path, project_app, monkeypatch):
     project_app.tags = [
-        TagDefinition(f"T{i}", "BOOL", "Input", f"DBX{i // 8}.{i % 8}")
+        TagDefinition(f"T{i}", "BOOL", "Input", f"%DB100.DBX{i // 8}.{i % 8}")
         for i in range(5000)
     ]
     calls = []
@@ -158,7 +158,7 @@ def test_bulk_analog_modes_survive_project_save_and_load(project_app, monkeypatc
     project_app.tags[1].direction = "Input"
     project_app.tags[1].enabled_sim = False
     project_app.tags.append(
-        TagDefinition("Level", "REAL", "Input", "DBD24", enabled_sim=False)
+        TagDefinition("Level", "REAL", "Input", "%DB100.DBD24", enabled_sim=False)
     )
     project_app._analog_profile_cache = {
         "Speed": {
@@ -203,7 +203,7 @@ def test_legacy_v1_project_without_analog_profiles_loads_with_defaults():
     project = project_config._default_project_data()
     project.pop("analog_profiles")
     project["tags"] = [
-        TagDefinition("LegacyLevel", "REAL", "Input", "DBD0", True).to_dict()
+        TagDefinition("LegacyLevel", "REAL", "Input", "%DB100.DBD0", True).to_dict()
     ]
 
     staged = project_config._stage_project_data(project)
@@ -220,7 +220,7 @@ def test_legacy_v1_project_without_analog_profiles_loads_with_defaults():
 
 
 def test_partial_and_older_key_profile_data_is_normalized_per_field():
-    tag = TagDefinition("Level", "REAL", "Input", "DBD0", True)
+    tag = TagDefinition("Level", "REAL", "Input", "%DB100.DBD0", True)
 
     profile = normalize_analog_profile(
         {
@@ -242,7 +242,7 @@ def test_partial_and_older_key_profile_data_is_normalized_per_field():
 
 
 def test_invalid_profile_fields_do_not_discard_valid_mode_or_other_values():
-    tag = TagDefinition("Level", "REAL", "Input", "DBD0")
+    tag = TagDefinition("Level", "REAL", "Input", "%DB100.DBD0")
     profile = normalize_analog_profile(
         {
             "mode": "Random",
@@ -330,7 +330,7 @@ def test_edpger02_project_restores_without_editor_controls_or_rollback():
 def test_keyed_and_null_legacy_profile_sections_are_accepted():
     project = project_config._default_project_data()
     project["tags"] = [
-        TagDefinition("Level", "REAL", "Input", "DBD0").to_dict()
+        TagDefinition("Level", "REAL", "Input", "%DB100.DBD0").to_dict()
     ]
     project["analog_profiles"] = {
         "Level": {"mode": "Ramp", "min": "2", "max": "8"}

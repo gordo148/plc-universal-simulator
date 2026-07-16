@@ -10,7 +10,6 @@ class ConnectionState:
     ip: str = "192.168.1.10"
     rack: str = "0"
     slot: str = "1"
-    db_number: str = "100"
     port: str = "502"
     slave_id: str = "1"
     coil_start: str = "0"

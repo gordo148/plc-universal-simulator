@@ -6,7 +6,7 @@ from ui.tag_manager import suggest_address, validate_tag_address
 
 @pytest.mark.parametrize(
     ("data_type", "address"),
-    [("BOOL", "DBX0.0"), ("INT", "DBW10"), ("REAL", "DBD20")],
+    [("BOOL", "%DB14.DBX0.0"), ("INT", "%DB14.DBW10"), ("REAL", "%DB14.DBD20")],
 )
 def test_valid_siemens_addresses(data_type, address):
     assert validate_tag_address("Siemens", data_type, address)[0]

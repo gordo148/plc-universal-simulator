@@ -5,8 +5,10 @@ import os
 import tempfile
 from tkinter import TclError, filedialog, messagebox
 
-from core.tag_model import Tag
+from core.tag_model import SIEMENS_NUMERIC_TYPES, Tag
+from drivers.siemens_address import SiemensAddressError, validate_siemens_data_type
 from core.version import APP_NAME, APP_VERSION
+from services.storage_paths import future_project_path, project_directory
 from ui.header import (
     SCHNEIDER_MODELS, connection_brand, connection_value,
     set_connection_brand, set_connection_value,
@@ -26,6 +28,7 @@ from ui.analog_profiles import canonical_analog_profile
 PROJECT_EXTENSION = ".simproject"
 PROJECT_FORMAT = "plc-universal-simulator-project"
 PROJECT_VERSION = 1
+PROJECT_SCHEMA_VERSION = 2
 SUPPORTED_BRANDS = (
     "Siemens",
     "Schneider",
@@ -38,8 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _initial_project_directory(app):
-    settings = getattr(app, "settings", None)
-    return getattr(settings, "last_project_folder", "configs")
+    return project_directory()
 
 
 def new_project(app):
@@ -60,7 +62,7 @@ def save_project(app):
     file_path = getattr(app, "project_path", None)
     if not file_path:
         return save_project_as(app)
-    return _write_project(app, file_path)
+    return _write_project(app, future_project_path(file_path))
 
 
 def save_project_as(app):
@@ -93,7 +95,8 @@ def open_project_path(app, file_path):
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             project = json.load(file)
-        staged_project = _stage_project_data(project)
+        migrated_project = migrate_project_data(project)
+        staged_project = _stage_project_data(migrated_project)
     except (OSError, json.JSONDecodeError, ValueError) as error:
         LOGGER.exception("Project open failed: %s", file_path)
         messagebox.showerror(
@@ -124,6 +127,12 @@ def open_project_path(app, file_path):
     _update_project_title(app)
     app.status_label.configure(text="● PROJETO ABERTO", text_color="lime")
     LOGGER.info("Project opened: %s", file_path)
+    migration_warnings = migrated_project.get("_migration_warnings", [])
+    if migrated_project.get("_was_migrated"):
+        message = "This project was migrated to Siemens per-tag addresses. It will use schema 2 when saved."
+        if migration_warnings:
+            message += "\n\n" + "\n".join(migration_warnings)
+        messagebox.showwarning("Project migrated", message)
     return True
 
 
@@ -167,7 +176,6 @@ def build_project_data(app):
         connection["settings"] = {
             "rack": connection_value(app, "rack"),
             "slot": connection_value(app, "slot"),
-            "db_number": connection_value(app, "db_number"),
         }
     elif brand == "Schneider":
         connection["settings"] = {
@@ -205,7 +213,7 @@ def build_project_data(app):
     analog_profiles = [
         dict(canonical_analog_profile(app, tag))
         for tag in getattr(app, "tags", [])
-        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+        if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES
     ]
 
     alarms = [
@@ -232,6 +240,7 @@ def build_project_data(app):
     return {
         "format": PROJECT_FORMAT,
         "version": PROJECT_VERSION,
+        "schema_version": PROJECT_SCHEMA_VERSION,
         "plc": connection,
         "tags": [
             tag.to_dict()
@@ -449,11 +458,9 @@ def _restore_connection_settings(app, brand, settings):
         if hasattr(app, "connection_state"):
             set_connection_value(app, "rack", settings.get("rack", "0"))
             set_connection_value(app, "slot", settings.get("slot", "1"))
-            set_connection_value(app, "db_number", settings.get("db_number", "100"))
         else:
             _set_entry(app.rack_entry, settings.get("rack", "0"))
             _set_entry(app.slot_entry, settings.get("slot", "1"))
-            _set_entry(app.db_entry, settings.get("db_number", "100"))
         return
 
     if brand == "Modbus TCP":
@@ -551,7 +558,7 @@ def _restore_digital_settings(app, settings):
 def _restore_analog_profiles(app, profiles):
     analog_tags = [
         tag for tag in getattr(app, "tags", [])
-        if tag.direction == "Input" and tag.data_type in ("INT", "REAL")
+        if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES
     ]
     tags_by_name = {tag.name: tag for tag in analog_tags}
     by_tag = {}
@@ -702,13 +709,13 @@ def _default_project_data():
     return {
         "format": PROJECT_FORMAT,
         "version": PROJECT_VERSION,
+        "schema_version": PROJECT_SCHEMA_VERSION,
         "plc": {
             "brand": "Siemens",
             "ip": "192.168.1.10",
             "settings": {
                 "rack": "0",
                 "slot": "1",
-                "db_number": "100",
             },
         },
         "tags": [],
@@ -726,6 +733,7 @@ def _default_project_data():
 
 
 def _stage_project_data(project):
+    project = migrate_project_data(project)
     _validate_project_data(project)
     staged = copy.deepcopy(project)
 
@@ -743,14 +751,17 @@ def _stage_project_data(project):
         if not isinstance(tag_data, dict):
             raise ValueError(f"Tag {index}: definição inválida")
         tag = Tag.from_dict(tag_data)
-        if tag.data_type not in ("BOOL", "INT", "REAL"):
+        allowed_types = ("BOOL", "BYTE", "WORD", "INT", "DWORD", "DINT", "REAL") if brand == "Siemens" else ("BOOL", "INT", "REAL")
+        if tag.data_type not in allowed_types:
             raise ValueError(f"Tag {index}: tipo inválido {tag.data_type}")
         if tag.direction not in ("Input", "Feedback", "Output", "Internal"):
             raise ValueError(f"Tag {index}: direção inválida {tag.direction}")
         if not isinstance(tag.address, str) or not tag.address.strip():
             raise ValueError(f"Tag {index}: endereço vazio")
         tag.address = tag.address.strip()
-        if brand not in ("Rockwell", "Simulator"):
+        if brand == "Siemens":
+            tag.address = validate_siemens_data_type(tag.data_type, tag.address).normalized_address
+        elif brand not in ("Rockwell", "Simulator"):
             tag.address = tag.address.upper()
         tags.append(tag)
 
@@ -837,6 +848,63 @@ def _validate_project_data(project):
         raise ValueError("Configuração PLC em falta")
     if not isinstance(project.get("tags", []), list):
         raise ValueError("Lista de tags inválida")
+
+
+def migrate_project_data(data):
+    """Return an in-memory schema-v2 project without modifying its source."""
+    if not isinstance(data, dict):
+        raise ValueError("Formato de projeto inválido")
+    migrated = copy.deepcopy(data)
+    if int(migrated.get("schema_version", 1) or 1) >= PROJECT_SCHEMA_VERSION:
+        return migrated
+
+    warnings = []
+    plc = migrated.get("plc", {})
+    if plc.get("brand", "Siemens") == "Siemens":
+        settings = plc.get("settings", {})
+        raw_db = settings.get("db_number", migrated.get("siemens_connection", {}).get("db_number"))
+        try:
+            db_number = int(raw_db)
+            if db_number <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            db_number = None
+
+        converted_tags = []
+        for index, raw_tag in enumerate(migrated.get("tags", []), start=1):
+            if not isinstance(raw_tag, dict):
+                warnings.append(f"Tag {index}: invalid definition was skipped.")
+                continue
+            tag = copy.deepcopy(raw_tag)
+            name = str(tag.get("name") or f"Tag {index}")
+            data_type = str(tag.get("data_type", "BOOL")).upper()
+            address = str(tag.get("address") or "").strip()
+            try:
+                if address and address.lstrip().startswith("%"):
+                    parsed = validate_siemens_data_type(data_type, address)
+                elif address.upper().startswith("DB") and db_number is not None:
+                    parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{address}")
+                else:
+                    offset = tag.get("byte_offset", tag.get("offset", tag.get("byte")))
+                    if offset is None or db_number is None:
+                        raise SiemensAddressError("missing legacy DB number or byte offset")
+                    offset = int(offset)
+                    units = {"BOOL": "DBX", "BYTE": "DBB", "WORD": "DBW", "INT": "DBW", "DWORD": "DBD", "DINT": "DBD", "REAL": "DBD"}
+                    suffix = f"{offset}.{int(tag.get('bit_offset', tag.get('bit', 0)))}" if data_type == "BOOL" else str(offset)
+                    parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{units[data_type]}{suffix}")
+                tag["address"] = parsed.normalized_address
+                for obsolete in ("byte_offset", "offset", "byte", "bit_offset", "bit", "db_number"):
+                    tag.pop(obsolete, None)
+                converted_tags.append(tag)
+            except (KeyError, TypeError, ValueError, SiemensAddressError) as error:
+                warnings.append(f'Tag "{name}": could not be migrated ({error}); tag was skipped.')
+        migrated["tags"] = converted_tags
+        settings.pop("db_number", None)
+
+    migrated["schema_version"] = PROJECT_SCHEMA_VERSION
+    migrated["_was_migrated"] = True
+    migrated["_migration_warnings"] = warnings
+    return migrated
 
 
 def _project_path(file_path):

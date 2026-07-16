@@ -43,7 +43,7 @@ vendor-specific interface.
 
 | Brand | Protocol | Address examples |
 | --- | --- | --- |
-| Siemens S7 | S7 data blocks | `DBX0.0`, `DBW10`, `DBD20` |
+| Siemens S7 | DB, markers, inputs and outputs | `%DB14.DBX0.0`, `%DB20.DBW10`, `%MW10`, `%I0.0`, `%QW20` |
 | Schneider Modbus | Modbus TCP | `%M0`, `%MW10` |
 | Generic Modbus TCP | Modbus TCP | `%M0`, `M0`, `0`, `%MW10`, `MW10` |
 | Rockwell EtherNet/IP | pycomm3 symbolic tags | `Start_Button`, `Tank_Level` |
@@ -204,15 +204,15 @@ runtime consumers generated from that tag database.
 Universal tag CSV files use a header row with these exact fields:
 
 ```text
-name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard
+name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard,Comment
 ```
 
 Example:
 
 ```csv
-name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard
-Start_Button,BOOL,Input,DBX0.0,1,true,0,yes
-Tank_Level,REAL,Feedback,DBD20,0,1,true,1
+name,data_type,direction,address,enabled_sim,enabled_trend,enabled_alarm,enabled_dashboard,Comment
+Start_Button,BOOL,Input,%DB14.DBX0.0,1,true,0,yes,Start command
+Tank_Level,REAL,Feedback,%DB30.DBD20,0,1,true,1,"Tank level, in percent"
 ```
 
 Rules:
@@ -223,9 +223,21 @@ Rules:
 - Addresses are validated against the currently selected brand
 - Invalid rows reject the whole import; tags are not partially replaced
 - UTF-8 and UTF-8 with BOM are supported
+- `Comment` is optional on import and defaults to an empty string. Existing
+  CSV files without it remain valid.
+- Comment aliases accepted during import include `Comments`, `Description`,
+  `Tag Comment`, `Comentario`, `Comentários`, and `Descrição`.
+- Comments are preserved by export/reimport, searchable in the Tag Manager,
+  and shown as interface tooltips. They do not affect PLC communication.
 
 Dedicated import commands are also available for Siemens TIA Portal and
 Schneider exports. Universal CSV export writes the current tag database.
+
+Siemens tags use a complete absolute PLC address in the `Address` column. The
+parser accepts addresses with or without `%`, is case-insensitive, and
+normalizes German `%E`/`%A` notation to `%I`/`%Q`. Input (`%I`) addresses are
+read-only. Absolute DB addresses on S7-1200/S7-1500 require non-optimized DB
+access.
 
 To create a new tag list, select the target PLC brand and choose **Exportar
 Template CSV**. Select a destination, edit the copied CSV with your tag names

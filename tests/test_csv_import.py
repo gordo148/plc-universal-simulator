@@ -27,7 +27,7 @@ ACCENTED_NAME = "Válvula_áéíóú_ãõ_ç_ºª"
 )
 def test_universal_csv_encoding_and_accents(tmp_path, encoding, bom):
     path = tmp_path / f"tags-{encoding}.csv"
-    body = CSV_HEADER + f"{ACCENTED_NAME},BOOL,Input,DBX0.0,1,0,0,1\n"
+    body = CSV_HEADER + f"{ACCENTED_NAME},BOOL,Input,%DB100.DBX0.0,1,0,0,1\n"
     data = body.encode(encoding)
     if bom:
         assert data.startswith(b"\xef\xbb\xbf")
@@ -41,7 +41,7 @@ def test_universal_csv_encoding_and_accents(tmp_path, encoding, bom):
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "cp1252", "latin-1"])
 def test_tia_csv_encoding_and_accents(tmp_path, encoding):
     path = tmp_path / f"tia-{encoding}.csv"
-    body = f"Name,Data Type,Logical Address,Comment\n{ACCENTED_NAME},Bool,%DBX0.0,Descrição ç ºª\n"
+    body = f"Name,Data Type,Logical Address,Comment\n{ACCENTED_NAME},Bool,%DB100.DBX0.0,Descrição ç ºª\n"
     path.write_bytes(body.encode(encoding))
 
     tags = tag_manager.read_tia_tags_csv(path)
@@ -64,8 +64,8 @@ def test_valid_universal_csv(tmp_path):
     path = tmp_path / "tags.csv"
     path.write_text(
         CSV_HEADER
-        + "Start,BOOL,Input,DBX0.0,1,true,0,yes\n"
-        + "Setpoint,REAL,Output,DBD20,0,1,false,true\n",
+        + "Start,BOOL,Input,%DB100.DBX0.0,1,true,0,yes\n"
+        + "Setpoint,REAL,Output,%DB100.DBD20,0,1,false,true\n",
         encoding="utf-8",
     )
 
@@ -82,7 +82,7 @@ def test_valid_universal_csv(tmp_path):
 def test_empty_boolean_cells_are_false_for_all_boolean_columns(tmp_path):
     path = tmp_path / "empty_boolean_cells.csv"
     path.write_text(
-        CSV_HEADER + "Start,BOOL,Input,DBX0.0,,,,\n",
+        CSV_HEADER + "Start,BOOL,Input,%DB100.DBX0.0,,,,\n",
         encoding="utf-8",
     )
 
@@ -117,7 +117,7 @@ def test_csv_with_trailing_empty_column_is_accepted(tmp_path):
     path.write_text(
         CSV_HEADER.rstrip("\n")
         + ",\n"
-        + "Tag1,REAL,Input,DBD0,1,1,0,1,0\n",
+        + "Tag1,REAL,Input,%DB100.DBD0,1,1,0,1,0\n",
         encoding="utf-8",
     )
 
@@ -131,7 +131,7 @@ def test_csv_with_trailing_empty_column_is_accepted(tmp_path):
 def test_csv_with_extra_trailing_row_value_is_accepted(tmp_path):
     path = tmp_path / "tags_extra_value.csv"
     path.write_text(
-        CSV_HEADER + "Tag1,BOOL,Input,DBX0.0,1,0,0,1,spreadsheet\n",
+        CSV_HEADER + "Tag1,BOOL,Input,%DB100.DBX0.0,1,0,0,1,spreadsheet\n",
         encoding="utf-8",
     )
 
@@ -143,7 +143,7 @@ def test_csv_with_extra_trailing_row_value_is_accepted(tmp_path):
 def test_csv_imports_more_than_seventy_siemens_tags(tmp_path):
     path = tmp_path / "many_siemens_tags.csv"
     rows = [
-        f"Tag_{index:02d},BOOL,Input,DBX{index // 8}.{index % 8},1,0,0,0\n"
+        f"Tag_{index:02d},BOOL,Input,%DB100.DBX{index // 8}.{index % 8},1,0,0,0\n"
         for index in range(75)
     ]
     path.write_text(CSV_HEADER + "".join(rows), encoding="cp1252")
@@ -159,11 +159,11 @@ def test_csv_imports_five_hundred_mixed_siemens_tags(tmp_path):
     rows = []
     for index in range(500):
         if index % 3 == 0:
-            rows.append(f"Bool{index},BOOL,Input,DBX{index // 8}.{index % 8},1,0,0,1\n")
+            rows.append(f"Bool{index},BOOL,Input,%DB100.DBX{index // 8}.{index % 8},1,0,0,1\n")
         elif index % 3 == 1:
-            rows.append(f"Int{index},INT,Input,DBW{index * 2},1,0,0,1\n")
+            rows.append(f"Int{index},INT,Input,%DB100.DBW{index * 2},1,0,0,1\n")
         else:
-            rows.append(f"Real{index},REAL,Input,DBD{index * 4},1,1,0,0\n")
+            rows.append(f"Real{index},REAL,Input,%DB100.DBD{index * 4},1,1,0,0\n")
     path.write_text(CSV_HEADER + "".join(rows), encoding="utf-8")
 
     tags = tag_manager.read_tags_csv(path, "Siemens")
@@ -177,7 +177,7 @@ def test_excel_exported_csv_with_spreadsheet_columns_is_accepted(tmp_path):
     path.write_text(
         "\ufeff name ; data_type ; direction ; address ; enabled_sim ; "
         "enabled_trend ; enabled_alarm ; enabled_dashboard ; Unnamed: 8\r\n"
-        "Tag1;REAL;Input;DBD0;1;1;0;1;\r\n",
+        "Tag1;REAL;Input;%DB100.DBD0;1;1;0;1;\r\n",
         encoding="utf-8",
     )
 
@@ -185,7 +185,7 @@ def test_excel_exported_csv_with_spreadsheet_columns_is_accepted(tmp_path):
 
     assert len(tags) == 1
     assert tags[0].name == "Tag1"
-    assert tags[0].address == "DBD0"
+    assert tags[0].address == "%DB100.DBD0"
 
 
 def test_missing_csv_columns_error_lists_missing_and_detected_columns(tmp_path):
@@ -204,11 +204,11 @@ def test_missing_csv_columns_error_lists_missing_and_detected_columns(tmp_path):
 def test_invalid_csv_address_is_rejected(tmp_path):
     path = tmp_path / "invalid.csv"
     path.write_text(
-        CSV_HEADER + "Broken,REAL,Input,DBW20,1,1,0,0\n",
+        CSV_HEADER + "Broken,REAL,Input,%DB100.DBW20,1,1,0,0\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="linha 2"):
+    with pytest.raises(ValueError, match="Row 2"):
         tag_manager.read_tags_csv(path, "Siemens")
 
 
@@ -216,8 +216,8 @@ def test_invalid_csv_does_not_partially_replace_tags(tmp_path, monkeypatch):
     path = tmp_path / "partial.csv"
     path.write_text(
         CSV_HEADER
-        + "Valid,BOOL,Input,DBX0.0,1,1,0,0\n"
-        + "Invalid,REAL,Input,DBW20,1,1,0,0\n",
+        + "Valid,BOOL,Input,%DB100.DBX0.0,1,1,0,0\n"
+        + "Invalid,REAL,Input,%DB100.DBW20,1,1,0,0\n",
         encoding="utf-8",
     )
     original = [TagDefinition("Existing", "BOOL", "Input", "DBX1.0")]

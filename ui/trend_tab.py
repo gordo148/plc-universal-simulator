@@ -11,7 +11,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ui.scrollable_frame import widget_exists
-from ui.table_utils import clear_entry, copy_text, debounce, filter_tags, move_selection, page_tags, sort_tags
+from services.storage_paths import csv_directory
+from ui.table_utils import clear_entry, copy_text, debounce, filter_tags, move_selection, page_tags, sort_tags, tag_comment_tooltip, treeview_tag_comment_tooltip
 
 
 LOGGER = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def create_trend_tab(app):
     search = ctk.CTkFrame(left)
     search.pack(fill="x", padx=6, pady=6)
     ctk.CTkLabel(search, text="Search").pack(side="left", padx=(3, 2))
-    app.trend_search_entry = ctk.CTkEntry(search, width=250, placeholder_text="Name, address or type")
+    app.trend_search_entry = ctk.CTkEntry(search, width=250, placeholder_text="Name, address or comment")
     app.trend_search_entry.pack(side="left", padx=3)
     ctk.CTkButton(search, text="×", width=30, command=lambda: clear_trend_search(app)).pack(side="left", padx=(0, 6))
     filters = ctk.CTkFrame(left)
@@ -84,9 +85,9 @@ def create_trend_tab(app):
 
     table_frame = ctk.CTkFrame(left)
     table_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-    columns = ("status", "name", "address", "type", "value")
+    columns = ("status", "name", "address", "comment", "type", "value")
     app.trend_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=16)
-    for column, title, width in (("status", "Status", 58), ("name", "Name", 115), ("address", "Address", 75), ("type", "Type", 45), ("value", "Value", 65)):
+    for column, title, width in (("status", "Status", 58), ("name", "Name", 105), ("address", "Address", 75), ("comment", "Comment", 150), ("type", "Type", 45), ("value", "Value", 65)):
         app.trend_table.heading(column, text=title, command=lambda col=column: sort_trend_table(app, col))
         app.trend_table.column(column, width=width, anchor="w" if column == "name" else "center")
     scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=app.trend_table.yview)
@@ -97,6 +98,10 @@ def create_trend_tab(app):
     app.trend_table.bind("<Double-1>", lambda _e: toggle_selected_trend(app))
     app.trend_table.bind("<Button-3>", lambda e: show_trend_context_menu(app, e))
     app.trend_table.bind("<Key>", lambda e: handle_trend_key(app, e))
+    treeview_tag_comment_tooltip(
+        app.trend_table,
+        lambda row: app._trend_table_tags[app.trend_table.index(row)] if row else None,
+    )
     paging = ctk.CTkFrame(left)
     paging.pack(fill="x", padx=6, pady=(0, 5))
     app.trend_count_label = ctk.CTkLabel(paging, text="No tags")
@@ -110,6 +115,10 @@ def create_trend_tab(app):
     editor.pack(side="bottom", fill="x", padx=6, pady=(6, 6))
     app.trend_editor_title = ctk.CTkLabel(editor, text="Select a trend tag", font=("Arial", 14, "bold"))
     app.trend_editor_title.grid(row=0, column=0, columnspan=8, sticky="w", padx=12, pady=(10, 5))
+    tag_comment_tooltip(
+        app.trend_editor_title,
+        lambda: next((tag for tag in getattr(app, "tags", []) if tag.name == app._trend_selected_tag_name), None),
+    )
     app.trend_editor_fields = {}
     specs = (
         ("enabled", "Trend enabled", "switch", None), ("color", "Color", "menu", COLORS),
@@ -209,7 +218,7 @@ def refresh_trend_selectors(app, reset_page=False):
     app._trend_table_tags = visible_tags
     selected_item = None
     for tag in visible_tags:
-        item = table.insert("", "end", values=("● ON" if tag.enabled_trend else "○ OFF", tag.name, tag.address, tag.data_type, _display_value(app, tag)))
+        item = table.insert("", "end", values=("● ON" if tag.enabled_trend else "○ OFF", tag.name, tag.address, tag.comment, tag.data_type, _display_value(app, tag)))
         if tag.name == selected: selected_item = item
     if selected_item is None and table.get_children(): selected_item = table.get_children()[0]
     if selected_item is not None:
@@ -410,7 +419,7 @@ def redraw_trend(app):
 
 
 def export_csv(app):
-    file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")], initialfile="trend_export.csv")
+    file_path = filedialog.asksaveasfilename(initialdir=csv_directory(), defaultextension=".csv", filetypes=[("CSV files", "*.csv")], initialfile="trend_export.csv")
     if not file_path: return
     enabled_names = {tag.name for tag in getattr(app, "tags", []) if tag.enabled_trend}; tag_names = [name for name in app.trend_data["tags"] if name in enabled_names]
     try:

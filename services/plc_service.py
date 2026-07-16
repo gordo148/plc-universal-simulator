@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
+from drivers.siemens_address import validate_siemens_data_type
 
 
 LOGGER = logging.getLogger(__name__)
@@ -104,12 +105,7 @@ class PLCService:
 
         if brand == "Siemens":
             driver = _driver_class("SiemensS7Driver")()
-            connect_args = (
-                ip,
-                int(options.get("rack", 0)),
-                int(options.get("slot", 1)),
-                int(options.get("db_number", 100)),
-            )
+            connect_args = (ip, int(options.get("rack", 0)), int(options.get("slot", 1)))
         elif brand == "Schneider":
             driver = _driver_class("SchneiderModbusDriver")()
             connect_args = (
@@ -243,8 +239,12 @@ class PLCService:
 
         try:
             if self._brand == "Siemens":
-                byte_index, bit_index = _parse_siemens_address(tag)
-                result = self._driver.write_digital(byte_index, bit_index, bool(value))
+                address = validate_siemens_data_type(tag.data_type, tag.address)
+                if address.area == "I":
+                    raise PermissionError(
+                        f'Cannot write tag "{tag.name}" because {address.normalized_address} is a read-only input area.'
+                    )
+                result = self._driver.write_digital(address, bool(value))
             elif self._brand == "Rockwell":
                 tag_name = _parse_rockwell_address(tag)
                 result = self._driver.write_tag(tag_name, bool(value))
@@ -319,6 +319,15 @@ class PLCService:
                     value,
                     data_type,
                 )
+            elif self._brand == "Siemens":
+                if not isinstance(target, TagDefinition):
+                    raise ValueError("Siemens writes require a tag definition")
+                address = validate_siemens_data_type(data_type, target.address)
+                if address.area == "I":
+                    raise PermissionError(
+                        f'Cannot write tag "{target.name}" because {address.normalized_address} is a read-only input area.'
+                    )
+                result = self._driver.write_analog(address, value, data_type)
             else:
                 address = self._numeric_address(target)
                 result = self._driver.write_analog(address, value, data_type)
@@ -345,16 +354,15 @@ class PLCService:
 
     def _numeric_address(self, target: TagDefinition | str | int) -> int:
         if isinstance(target, TagDefinition):
-            if target.data_type not in ("INT", "REAL"):
-                raise ValueError("Numeric writes require an INT or REAL tag")
+            if target.data_type not in ("BYTE", "WORD", "INT", "DWORD", "DINT", "REAL"):
+                raise ValueError("Numeric writes require a numeric tag")
             if self._brand == "Siemens":
-                address, _ = _parse_siemens_address(target)
-                return address
+                return validate_siemens_data_type(target.data_type, target.address).byte_offset
             return self._parse_modbus_address(target)
 
         address = str(target).strip().upper()
         if self._brand == "Siemens":
-            return int(address.replace("DBW", "").replace("DBD", ""))
+            raise ValueError("Siemens writes require a tag definition")
         return int(address.replace("%MW", "").replace("MW", ""))
 
     def _parse_modbus_address(self, tag: TagDefinition) -> int:
@@ -368,9 +376,9 @@ class PLCService:
 
         for tag in tags:
             try:
-                byte_index, bit_index = _parse_siemens_address(tag)
+                address = validate_siemens_data_type(tag.data_type, tag.address)
                 parsed.append(
-                    (tag, byte_index, bit_index, _data_size(tag.data_type))
+                    (tag, address, address.size_bytes)
                 )
             except (TypeError, ValueError):
                 LOGGER.warning(
@@ -389,16 +397,14 @@ class PLCService:
             self.siemens_max_gap,
             self.siemens_max_read_size,
         )
-        for start, size, range_tags in ranges:
+        for area, db_number, start, size, range_tags in ranges:
             LOGGER.debug(
-                "Siemens DB read: DB=%s start=%s size=%s tags=%s",
-                getattr(self._driver, "db_number", "Unknown"),
-                start,
-                size,
+                "Siemens read: area=%s DB=%s start=%s size=%s tags=%s",
+                area, db_number, start, size,
                 len(range_tags),
             )
             try:
-                data = self._driver.read_range(start, size)
+                data = self._driver.read_range(area, db_number, start, size)
                 if data is None or len(data) < size:
                     raise ValueError(
                         f"expected {size} bytes, received "
@@ -408,29 +414,35 @@ class PLCService:
                 success = False
                 affected = ", ".join(
                     f"{tag.name} ({tag.address})"
-                    for tag, _byte, _bit, _size in range_tags
+                    for tag, _address, _size in range_tags
                 )
                 LOGGER.exception(
-                    "Siemens DB read failed: DB=%s start=%s size=%s "
+                    "Siemens read failed: area=%s DB=%s start=%s size=%s "
                     "affected_tags=%s",
-                    getattr(self._driver, "db_number", "Unknown"),
-                    start,
-                    size,
+                    area, db_number, start, size,
                     affected,
                 )
-                for tag, _byte, _bit, _size in range_tags:
+                for tag, _address, _size in range_tags:
                     self.runtime_cache.invalidate(tag.name)
                 continue
 
-            for tag, byte_index, bit_index, _size in range_tags:
-                relative_offset = byte_index - start
+            for tag, address, _size in range_tags:
+                relative_offset = address.byte_offset - start
                 try:
                     if tag.data_type == "BOOL":
                         value = snap7_util.get_bool(
-                            data, relative_offset, bit_index
+                            data, relative_offset, address.bit_offset
                         )
+                    elif tag.data_type == "BYTE":
+                        value = snap7_util.get_byte(data, relative_offset)
+                    elif tag.data_type == "WORD":
+                        value = snap7_util.get_word(data, relative_offset)
                     elif tag.data_type == "INT":
                         value = snap7_util.get_int(data, relative_offset)
+                    elif tag.data_type == "DWORD":
+                        value = snap7_util.get_dword(data, relative_offset)
+                    elif tag.data_type == "DINT":
+                        value = snap7_util.get_dint(data, relative_offset)
                     elif tag.data_type == "REAL":
                         value = round(
                             snap7_util.get_real(data, relative_offset), 3
@@ -683,62 +695,28 @@ def _contiguous_blocks(tags, size_for_tag, maximum_count):
     return blocks
 
 
-def _data_size(data_type: str) -> int:
-    return {"BOOL": 1, "INT": 2, "REAL": 4}.get(data_type, 0)
-
-
 def _siemens_read_ranges(parsed_tags, maximum_gap, maximum_size):
-    """Group parsed Siemens tags into compact, size-limited DB ranges."""
+    """Group tags by area/DB into compact, size-limited read ranges."""
     ranges = []
-    current = []
-    start = None
-    end = None
-
-    for item in sorted(parsed_tags, key=lambda parsed: parsed[1]):
-        tag_start = item[1]
-        tag_end = tag_start + item[3]
-        if current and (
-            tag_start - end > maximum_gap
-            or max(end, tag_end) - start > maximum_size
-        ):
-            ranges.append((start, end - start, current))
-            current = []
-            start = None
-            end = None
-
-        if not current:
-            start = tag_start
-            end = tag_end
-        else:
-            end = max(end, tag_end)
-        current.append(item)
-
-    if current:
-        ranges.append((start, end - start, current))
+    groups = {}
+    for item in parsed_tags:
+        groups.setdefault((item[1].area, item[1].db_number), []).append(item)
+    for (area, db_number), items in groups.items():
+        current, start, end = [], None, None
+        for item in sorted(items, key=lambda parsed: parsed[1].byte_offset):
+            tag_start = item[1].byte_offset
+            tag_end = tag_start + item[2]
+            if current and (tag_start - end > maximum_gap or max(end, tag_end) - start > maximum_size):
+                ranges.append((area, db_number, start, end - start, current))
+                current, start, end = [], None, None
+            if not current:
+                start, end = tag_start, tag_end
+            else:
+                end = max(end, tag_end)
+            current.append(item)
+        if current:
+            ranges.append((area, db_number, start, end - start, current))
     return ranges
-
-
-def _parse_siemens_address(tag: TagDefinition) -> tuple[int, int | None]:
-    address = str(tag.address).strip().upper()
-    if tag.data_type == "BOOL":
-        match = re.fullmatch(r"DBX(\d+)\.(-?\d+)", address)
-        if match is None:
-            raise ValueError("Invalid Siemens BOOL address")
-        bit_index = int(match.group(2))
-        if not 0 <= bit_index <= 7:
-            raise ValueError("Invalid bit index")
-        return int(match.group(1)), bit_index
-    if tag.data_type == "INT":
-        match = re.fullmatch(r"DBW(\d+)", address)
-        if match is None:
-            raise ValueError("Invalid Siemens INT address")
-        return int(match.group(1)), None
-    if tag.data_type == "REAL":
-        match = re.fullmatch(r"DBD(\d+)", address)
-        if match is None:
-            raise ValueError("Invalid Siemens REAL address")
-        return int(match.group(1)), None
-    raise ValueError("Unsupported tag type")
 
 
 def _parse_schneider_address(tag: TagDefinition) -> int:

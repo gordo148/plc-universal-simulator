@@ -1,6 +1,9 @@
 from dataclasses import asdict, dataclass
 
 
+SIEMENS_NUMERIC_TYPES = ("BYTE", "WORD", "INT", "DWORD", "DINT", "REAL")
+
+
 @dataclass
 class TagDefinition:
     name: str
@@ -11,6 +14,10 @@ class TagDefinition:
     enabled_trend: bool = False
     enabled_alarm: bool = False
     enabled_dashboard: bool = False
+    comment: str = ""
+
+    def __post_init__(self):
+        self.comment = "" if self.comment is None else str(self.comment)
 
     def to_dict(self):
         return asdict(self)
@@ -26,6 +33,7 @@ class TagDefinition:
             enabled_trend=data.get("enabled_trend", False),
             enabled_alarm=data.get("enabled_alarm", False),
             enabled_dashboard=data.get("enabled_dashboard", False),
+            comment=data.get("comment") or "",
         )
 
 
