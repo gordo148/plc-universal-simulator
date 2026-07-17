@@ -15,6 +15,19 @@ def update_pid_comment_labels(app):
     app.pid_comment_label.configure(text="Comments: " + (" · ".join(parts) if parts else "—"))
 
 
+def select_pid_tag_reference(app, role, selected_name):
+    if role == "sp_source" and selected_name == "Manual":
+        tag_id = None
+    else:
+        tag = next(
+            (tag for tag in getattr(app, "tags", []) if tag.name == selected_name),
+            None,
+        )
+        tag_id = tag.tag_id if tag is not None else None
+    setattr(app, f"_pid_{role}_tag_id", tag_id)
+    update_pid_comment_labels(app)
+
+
 def create_pid_tab(app):
     frame = ctk.CTkFrame(app.tab_pid)
     frame.pack(padx=20, pady=20, fill="x")
@@ -24,7 +37,7 @@ def create_pid_tab(app):
     )
 
     ctk.CTkLabel(frame, text="SP Source").grid(row=1, column=0, padx=10, pady=8)
-    app.pid_sp_source_menu = ctk.CTkOptionMenu(frame, values=["Manual"], command=lambda _v: update_pid_comment_labels(app))
+    app.pid_sp_source_menu = ctk.CTkOptionMenu(frame, values=["Manual"], command=lambda value: select_pid_tag_reference(app, "sp_source", value))
     app.pid_sp_source_menu.set("Manual")
     app.pid_sp_source_menu.grid(row=1, column=1, padx=10)
 
@@ -34,11 +47,11 @@ def create_pid_tab(app):
     app.pid_sp_entry.grid(row=1, column=3, padx=10)
 
     ctk.CTkLabel(frame, text="PV Source").grid(row=1, column=4, padx=10)
-    app.pid_pv_menu = ctk.CTkOptionMenu(frame, values=[], command=lambda _v: update_pid_comment_labels(app))
+    app.pid_pv_menu = ctk.CTkOptionMenu(frame, values=[], command=lambda value: select_pid_tag_reference(app, "pv_source", value))
     app.pid_pv_menu.grid(row=1, column=5, padx=10)
 
     ctk.CTkLabel(frame, text="OUT Destination").grid(row=2, column=0, padx=10, pady=8)
-    app.pid_out_menu = ctk.CTkOptionMenu(frame, values=[], command=lambda _v: update_pid_comment_labels(app))
+    app.pid_out_menu = ctk.CTkOptionMenu(frame, values=[], command=lambda value: select_pid_tag_reference(app, "out_source", value))
     app.pid_out_menu.grid(row=2, column=1, padx=10)
     for menu in (app.pid_sp_source_menu, app.pid_pv_menu, app.pid_out_menu):
         tag_comment_tooltip(

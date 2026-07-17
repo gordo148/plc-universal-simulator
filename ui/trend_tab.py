@@ -38,7 +38,7 @@ def create_trend_tab(app):
     app.trend_data = {"time": [], "tags": {}}
     app.trend_auto_scale = ctk.BooleanVar(value=True)
     app.trend_visible_tags = {
-        tag.name for tag in getattr(app, "tags", []) if tag.enabled_trend
+        tag.tag_id for tag in getattr(app, "tags", []) if tag.enabled_trend
     }
     app.trend_tag_vars = {}  # compatibility: deliberately contains no per-tag Tk variables
     app._trend_configs = {}
@@ -174,12 +174,12 @@ def clear_trend_search(app):
 
 def _trend_config(app, tag):
     configs = getattr(app, "_trend_configs", {})
-    if tag.name not in configs:
-        configs[tag.name] = default_trend_config(len(configs))
+    if tag.tag_id not in configs:
+        configs[tag.tag_id] = default_trend_config(len(configs))
         if hasattr(app, "trend_visible_tags"):
-            configs[tag.name]["visible"] = tag.name in app.trend_visible_tags
+            configs[tag.tag_id]["visible"] = tag.tag_id in app.trend_visible_tags
     app._trend_configs = configs
-    return configs[tag.name]
+    return configs[tag.tag_id]
 
 
 def _filtered_trend_tags(app):
@@ -189,8 +189,8 @@ def _filtered_trend_tags(app):
     if selected_filter == "Enabled": tags = [tag for tag in tags if tag.enabled_trend]
     elif selected_filter == "Disabled": tags = [tag for tag in tags if not tag.enabled_trend]
     elif selected_filter in ("BOOL", "INT", "REAL"): tags = [tag for tag in tags if tag.data_type == selected_filter]
-    elif selected_filter == "Visible": tags = [tag for tag in tags if tag.name in visible]
-    elif selected_filter == "Hidden": tags = [tag for tag in tags if tag.name not in visible]
+    elif selected_filter == "Visible": tags = [tag for tag in tags if tag.tag_id in visible or tag.name in visible]
+    elif selected_filter == "Hidden": tags = [tag for tag in tags if tag.tag_id not in visible and tag.name not in visible]
     values = {tag.name: getattr(app, "tag_runtime", None).get_value(tag.name) if getattr(app, "tag_runtime", None) else None for tag in tags}
     return sort_tags(tags, app._trend_sort_column, app._trend_sort_descending, values=values)
 
@@ -295,8 +295,8 @@ def apply_trend_editor(app):
     for key, cast, minimum in (("line_width", float, 0.1), ("sample_rate_ms", int, 50), ("history_size", int, 1), ("buffer_size", int, 1)):
         try: config[key] = max(minimum, cast(fields[key].get()))
         except (TypeError, ValueError): pass
-    if config["visible"]: app.trend_visible_tags.add(tag.name)
-    else: app.trend_visible_tags.discard(tag.name)
+    if config["visible"]: app.trend_visible_tags.add(tag.tag_id)
+    else: app.trend_visible_tags.discard(tag.tag_id)
     if before != (tag.enabled_trend, tuple(config.items())) and hasattr(app, "mark_project_dirty"): app.mark_project_dirty()
     update_trend_table_values(app); redraw_trend(app)
 
@@ -307,7 +307,7 @@ def trend_editor_action(app, action):
     if action in (True, False): app.trend_editor_fields["enabled"].select() if action else app.trend_editor_fields["enabled"].deselect()
     elif action in ("show", "hide"): app.trend_editor_fields["visible"].select() if action == "show" else app.trend_editor_fields["visible"].deselect()
     elif action == "remove":
-        app.trend_editor_fields["enabled"].deselect(); app.trend_editor_fields["visible"].deselect(); app.trend_data.get("tags", {}).pop(tag.name, None)
+        app.trend_editor_fields["enabled"].deselect(); app.trend_editor_fields["visible"].deselect(); app.trend_data.get("tags", {}).pop(tag.tag_id, None)
     apply_trend_editor(app)
 
 
@@ -374,16 +374,16 @@ def clear_trend(app):
 def update_trend(app):
     if getattr(app, "is_closing", False) or getattr(app, "_shutdown_started", False) or not app.trend_running: return
     elapsed = round(time.time() - app.trend_start_time, 1); app.trend_data["time"].append(elapsed)
-    enabled_tags = [tag for tag in getattr(app, "tags", []) if tag.enabled_trend]; enabled_names = {tag.name for tag in enabled_tags}
-    for name in list(app.trend_data["tags"]):
-        if name not in enabled_names: del app.trend_data["tags"][name]
+    enabled_tags = [tag for tag in getattr(app, "tags", []) if tag.enabled_trend]; enabled_ids = {tag.tag_id for tag in enabled_tags}
+    for tag_id in list(app.trend_data["tags"]):
+        if tag_id not in enabled_ids: del app.trend_data["tags"][tag_id]
     sample_count = len(app.trend_data["time"])
     for tag in enabled_tags:
-        app.trend_data["tags"].setdefault(tag.name, [None] * (sample_count - 1)).append(_numeric_value(app.tag_runtime.get_value(tag.name)))
+        app.trend_data["tags"].setdefault(tag.tag_id, [None] * (sample_count - 1)).append(_numeric_value(app.tag_runtime.get_value(tag)))
     max_points = max((_trend_config(app, tag)["buffer_size"] for tag in enabled_tags), default=120)
     if len(app.trend_data["time"]) > max_points:
         app.trend_data["time"] = app.trend_data["time"][-max_points:]
-        for name in app.trend_data["tags"]: app.trend_data["tags"][name] = app.trend_data["tags"][name][-max_points:]
+        for tag_id in app.trend_data["tags"]: app.trend_data["tags"][tag_id] = app.trend_data["tags"][tag_id][-max_points:]
     redraw_trend(app); update_trend_table_values(app)
     job = None
     def scheduled():
@@ -406,12 +406,13 @@ def _csv_value(value):
 def redraw_trend(app):
     if not hasattr(app, "trend_ax"): return
     app.trend_ax.clear(); configure_axes(app); times = app.trend_data["time"]
-    enabled_names = {tag.name for tag in getattr(app, "tags", []) if tag.enabled_trend}
-    for index, (name, values) in enumerate(app.trend_data["tags"].items()):
-        if name not in enabled_names: continue
-        config = app._trend_configs.get(name, default_trend_config(index))
+    enabled = {tag.tag_id: tag for tag in getattr(app, "tags", []) if tag.enabled_trend}
+    for index, (tag_id, values) in enumerate(app.trend_data["tags"].items()):
+        tag = enabled.get(tag_id)
+        if tag is None: continue
+        config = app._trend_configs.get(tag_id, default_trend_config(index))
         if not config.get("visible", True): continue
-        if len(values) == len(times): app.trend_ax.plot(times, values, label=name, linewidth=config.get("line_width", 2), color=config.get("color", COLORS[index % len(COLORS)]))
+        if len(values) == len(times): app.trend_ax.plot(times, values, label=tag.name, linewidth=config.get("line_width", 2), color=config.get("color", COLORS[index % len(COLORS)]))
     if app.trend_auto_scale.get(): app.trend_ax.relim(); app.trend_ax.autoscale_view()
     else: app.trend_ax.set_ylim(0, 27648)
     if app.trend_ax.lines: app.trend_ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0)
@@ -421,11 +422,13 @@ def redraw_trend(app):
 def export_csv(app):
     file_path = filedialog.asksaveasfilename(initialdir=csv_directory(), defaultextension=".csv", filetypes=[("CSV files", "*.csv")], initialfile="trend_export.csv")
     if not file_path: return
-    enabled_names = {tag.name for tag in getattr(app, "tags", []) if tag.enabled_trend}; tag_names = [name for name in app.trend_data["tags"] if name in enabled_names]
+    enabled = {tag.tag_id: tag for tag in getattr(app, "tags", []) if tag.enabled_trend}
+    enabled_by_name = {tag.name: tag for tag in enabled.values()}
+    tag_ids = [key for key in app.trend_data["tags"] if key in enabled or key in enabled_by_name]
     try:
         with open(file_path, "w", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file); writer.writerow(["time_s"] + tag_names)
-            for index, elapsed in enumerate(app.trend_data["time"]): writer.writerow([elapsed] + [_csv_value(app.trend_data["tags"].get(name, [])[index] if index < len(app.trend_data["tags"].get(name, [])) else "") for name in tag_names])
+            writer = csv.writer(file); writer.writerow(["time_s"] + [(enabled.get(tag_id) or enabled_by_name[tag_id]).name for tag_id in tag_ids])
+            for index, elapsed in enumerate(app.trend_data["time"]): writer.writerow([elapsed] + [_csv_value(app.trend_data["tags"].get(tag_id, [])[index] if index < len(app.trend_data["tags"].get(tag_id, [])) else "") for tag_id in tag_ids])
     except OSError:
         LOGGER.exception("Trend CSV export failed: %s", file_path); messagebox.showerror("Erro Export CSV", "Unable to export CSV. Check file path and permissions."); return
     app.status_label.configure(text="● TREND EXPORTADA", text_color="lime"); LOGGER.info("Trend CSV exported: %s", file_path)

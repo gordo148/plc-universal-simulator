@@ -285,6 +285,11 @@ The active protocol determines the scan implementation:
 which is Tk for the normal cyclic path. Values are stored with source, validity
 and update timestamp.
 
+Runtime cache entries are keyed by each definition's stable `tag_id`. PLC scan
+and write paths pass `TagDefinition` objects to the cache; current feature/UI
+consumers may still use the transitional unique-name compatibility lookup. This
+identity choice does not alter the threading or scheduling model.
+
 ### 6.3 Write cycle
 
 Digital buttons, pulses, Analog controls/profiles, PID and reset operations call

@@ -109,7 +109,7 @@ def update_feedback_values(app):
 
     for row in app.feedback_rows:
         tag = row["tag"]
-        value = app.tag_runtime.get_value(tag.name)
+        value = app.tag_runtime.get_value(tag)
 
         if value is None:
             row["led"].configure(

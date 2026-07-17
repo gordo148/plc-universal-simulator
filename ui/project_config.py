@@ -5,7 +5,20 @@ import os
 import tempfile
 from tkinter import TclError, filedialog, messagebox
 
+from core.input_limits import (
+    InputFileTooLargeError,
+    MAX_PROJECT_FILE_SIZE_BYTES,
+    validate_input_file_size,
+)
+from core.tag_identity import InvalidTagIdError, generate_tag_id, normalize_tag_id
 from core.tag_model import SIEMENS_NUMERIC_TYPES, Tag
+from core.tag_references import (
+    TagReferenceError,
+    UnresolvedTagReferenceError,
+    build_tag_reference_index,
+    resolve_tag_reference,
+    serialize_tag_reference,
+)
 from drivers.siemens_address import SiemensAddressError, validate_siemens_data_type
 from core.version import APP_NAME, APP_VERSION
 from services.storage_paths import future_project_path, project_directory
@@ -28,7 +41,7 @@ from ui.analog_profiles import canonical_analog_profile
 PROJECT_EXTENSION = ".simproject"
 PROJECT_FORMAT = "plc-universal-simulator-project"
 PROJECT_VERSION = 1
-PROJECT_SCHEMA_VERSION = 2
+PROJECT_SCHEMA_VERSION = 4
 SUPPORTED_BRANDS = (
     "Siemens",
     "Schneider",
@@ -38,6 +51,10 @@ SUPPORTED_BRANDS = (
     "Simulator",
 )
 LOGGER = logging.getLogger(__name__)
+
+
+class ProjectTagIdentityError(ValueError):
+    """Raised when project tag identities are malformed or duplicated."""
 
 
 def _initial_project_directory(app):
@@ -93,10 +110,48 @@ def open_project_path(app, file_path):
     """Open a project from a known path, including a recent-project entry."""
 
     try:
+        validate_input_file_size(
+            file_path,
+            MAX_PROJECT_FILE_SIZE_BYTES,
+            "Project",
+        )
         with open(file_path, "r", encoding="utf-8") as file:
             project = json.load(file)
         migrated_project = migrate_project_data(project)
+        generated_ids = migrated_project.get("_identity_migration_count", 0)
+        if generated_ids:
+            LOGGER.info(
+                "Legacy project tag IDs generated: path=%s count=%d",
+                file_path,
+                generated_ids,
+            )
+        migrated_references = migrated_project.get("_reference_migration_count", 0)
+        if migrated_references:
+            LOGGER.info(
+                "Legacy project feature references migrated: path=%s count=%d",
+                file_path,
+                migrated_references,
+            )
         staged_project = _stage_project_data(migrated_project)
+    except InputFileTooLargeError as error:
+        messagebox.showerror("Erro ao abrir projeto", str(error))
+        return False
+    except ProjectTagIdentityError as error:
+        LOGGER.warning(
+            "Project tag identity validation failed: path=%s error=%s",
+            file_path,
+            error,
+        )
+        messagebox.showerror("Erro ao abrir projeto", str(error))
+        return False
+    except TagReferenceError as error:
+        LOGGER.warning(
+            "Project feature reference validation failed: path=%s error=%s",
+            file_path,
+            error,
+        )
+        messagebox.showerror("Erro ao abrir projeto", str(error))
+        return False
     except (OSError, json.JSONDecodeError, ValueError) as error:
         LOGGER.exception("Project open failed: %s", file_path)
         messagebox.showerror(
@@ -129,7 +184,13 @@ def open_project_path(app, file_path):
     LOGGER.info("Project opened: %s", file_path)
     migration_warnings = migrated_project.get("_migration_warnings", [])
     if migrated_project.get("_was_migrated"):
-        message = "This project was migrated to Siemens per-tag addresses. It will use schema 2 when saved."
+        message = (
+            "This project was migrated in memory. The original file was not "
+            f"changed; it will use schema {PROJECT_SCHEMA_VERSION} when saved."
+        )
+        generated_ids = migrated_project.get("_identity_migration_count", 0)
+        if generated_ids:
+            message += f"\n\nStable IDs were generated for {generated_ids} tag(s)."
         if migration_warnings:
             message += "\n\n" + "\n".join(migration_warnings)
         messagebox.showwarning("Project migrated", message)
@@ -138,6 +199,13 @@ def open_project_path(app, file_path):
 
 def build_project_data(app):
     brand = connection_brand(app)
+    tags = list(getattr(app, "tags", []))
+    tag_index = build_tag_reference_index(tags)
+
+    def tag_for_name(name):
+        matches = tag_index.by_name.get(str(name), ())
+        return matches[0] if len(matches) == 1 else None
+
     pid_settings = {
         "sp": "10000",
         "sp_source": "Manual",
@@ -153,11 +221,34 @@ def build_project_data(app):
     }
     if hasattr(app, "pid_out_menu"):
         output_tag = get_tag_by_name(app, app.pid_out_menu.get())
+        sp_name = app.pid_sp_source_menu.get()
+        stored_sp = getattr(app, "_pid_sp_source_tag_id", None)
+        sp_tag = (
+            tag_index.by_id.get(stored_sp)
+            if stored_sp is not None
+            else (None if sp_name == "Manual" else tag_for_name(sp_name))
+        )
+        stored_pv = getattr(app, "_pid_pv_source_tag_id", None)
+        pv_tag = (
+            tag_index.by_id.get(stored_pv)
+            if stored_pv is not None
+            else tag_for_name(app.pid_pv_menu.get())
+        )
+        stored_out = getattr(app, "_pid_out_source_tag_id", None)
+        output_tag = (
+            tag_index.by_id.get(stored_out)
+            if stored_out is not None
+            else output_tag
+        )
         pid_settings = {
             "sp": app.pid_sp_entry.get(),
-            "sp_source": app.pid_sp_source_menu.get(),
-            "pv_source": app.pid_pv_menu.get(),
-            "out_source": app.pid_out_menu.get(),
+            "sp_source": "Manual" if sp_tag is None else None,
+            "sp_source_tag_id": sp_tag.tag_id if sp_tag else None,
+            "sp_source_tag_name": sp_tag.name if sp_tag else None,
+            "pv_source_tag_id": pv_tag.tag_id if pv_tag else None,
+            "pv_source_tag_name": pv_tag.name if pv_tag else None,
+            "out_source_tag_id": output_tag.tag_id if output_tag else None,
+            "out_source_tag_name": output_tag.name if output_tag else None,
             "out_address": output_tag.address if output_tag else "",
             "kp": app.pid_kp_entry.get(),
             "ki": app.pid_ki_entry.get(),
@@ -200,42 +291,71 @@ def build_project_data(app):
     digital_inputs_by_tag = dict(getattr(app, "_digital_settings_cache", {}))
     digital_tags = getattr(app, "digital_tags", [])
     for index, item in enumerate(getattr(app, "digital_controls", [])):
-        digital_inputs_by_tag[digital_tags[index].name] = {
-            "tag": digital_tags[index].name,
+        digital_inputs_by_tag[digital_tags[index].tag_id] = {
+            "tag_id": digital_tags[index].tag_id,
+            "tag_name": digital_tags[index].name,
             "mode": item["mode_menu"].get(),
             "pulse_ms": item["pulse_entry"].get(),
         }
-    digital_inputs = list(digital_inputs_by_tag.values())
+    digital_inputs = []
+    for item in digital_inputs_by_tag.values():
+        if not isinstance(item, dict):
+            continue
+        tag = (
+            tag_index.by_id.get(item.get("tag_id"))
+            if item.get("tag_id")
+            else tag_for_name(item.get("tag_name") or item.get("tag"))
+        )
+        if tag is not None:
+            digital_inputs.append({
+                **serialize_tag_reference(tag),
+                "mode": item.get("mode", "Toggle"),
+                "pulse_ms": item.get("pulse_ms", "500"),
+            })
 
     if getattr(app, "analog_controls", None):
         from ui.analog_tab import commit_analog_editor_configuration
         commit_analog_editor_configuration(app, mark_dirty=False)
     analog_profiles = [
-        dict(canonical_analog_profile(app, tag))
-        for tag in getattr(app, "tags", [])
+        {**dict(canonical_analog_profile(app, tag)), **serialize_tag_reference(tag)}
+        for tag in tags
         if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES
     ]
 
-    alarms = [
-        {
-            "source": alarm["source"],
+    alarms = []
+    for alarm in getattr(app, "alarms", []):
+        source_tag = (
+            tag_index.by_id.get(alarm.get("source_tag_id"))
+            if alarm.get("source_tag_id")
+            else tag_for_name(alarm.get("source", ""))
+        )
+        if source_tag is None:
+            raise TagReferenceError("Alarm source cannot be resolved while saving.")
+        alarms.append({
+            "source_tag_id": source_tag.tag_id,
+            "source_tag_name": source_tag.name,
             "type": alarm["type"],
             "limit": alarm["limit"],
-        }
-        for alarm in getattr(app, "alarms", [])
-    ]
+        })
 
-    selected_curves = sorted(getattr(app, "trend_visible_tags", set()))
+    selected_curves = set(getattr(app, "trend_visible_tags", set()))
     if not selected_curves:
-        selected_curves = [
+        selected_curves = {
             name
             for name, variable in getattr(app, "trend_tag_vars", {}).items()
             if variable.get()
-        ]
+        }
     trend_auto_scale = getattr(app, "trend_auto_scale", None)
     pending_trends = getattr(app, "_pending_trend_settings", {})
     if not selected_curves and not hasattr(app, "trend_tag_vars"):
-        selected_curves = list(pending_trends.get("selected_curves", []))
+        selected_curves = set(pending_trends.get("selected_curve_ids", []))
+        if not selected_curves:
+            selected_curves = set(pending_trends.get("selected_curves", []))
+    selected_curve_ids = sorted(
+        tag.tag_id
+        for tag in tags
+        if tag.tag_id in selected_curves or tag.name in selected_curves
+    )
 
     return {
         "format": PROJECT_FORMAT,
@@ -251,14 +371,28 @@ def build_project_data(app):
             "ui_state": {
                 "selected_tab": app.tabs.get() if hasattr(app, "tabs") else "Dashboard",
                 "digital": {
-                    "selected_row": getattr(app, "_digital_selected_tag_name", None),
+                    "selected_tag_id": (
+                        getattr(app, "_digital_selected_tag_id", None)
+                        or (
+                            tag_for_name(getattr(app, "_digital_selected_tag_name", None)).tag_id
+                            if tag_for_name(getattr(app, "_digital_selected_tag_name", None))
+                            else None
+                        )
+                    ),
                     "sort_column": getattr(app, "_digital_sort_column", "name"),
                     "sort_descending": getattr(app, "_digital_sort_descending", False),
                     "page_size": app.digital_page_size_menu.get() if hasattr(app, "digital_page_size_menu") else "50",
                     "search": app.digital_search_entry.get() if hasattr(app, "digital_search_entry") else "",
                 },
                 "analog": {
-                    "selected_row": getattr(app, "_analog_selected_tag_name", None),
+                    "selected_tag_id": (
+                        getattr(app, "_analog_selected_tag_id", None)
+                        or (
+                            tag_for_name(getattr(app, "_analog_selected_tag_name", None)).tag_id
+                            if tag_for_name(getattr(app, "_analog_selected_tag_name", None))
+                            else None
+                        )
+                    ),
                     "sort_column": getattr(app, "_analog_sort_column", "name"),
                     "sort_descending": getattr(app, "_analog_sort_descending", False),
                     "page_size": app.analog_page_size_menu.get() if hasattr(app, "analog_page_size_menu") else "50",
@@ -269,11 +403,11 @@ def build_project_data(app):
         "alarms": alarms,
         "pid": pid_settings,
         "trends": {
-            "enabled_tags": [
-                tag.name for tag in getattr(app, "tags", [])
+            "enabled_tag_ids": [
+                tag.tag_id for tag in tags
                 if tag.enabled_trend
             ],
-            "selected_curves": selected_curves,
+            "selected_curve_ids": selected_curve_ids,
             "auto_scale": (
                 bool(trend_auto_scale.get())
                 if trend_auto_scale is not None
@@ -281,8 +415,8 @@ def build_project_data(app):
             ),
         },
         "dashboard": {
-            "enabled_tags": [
-                tag.name for tag in getattr(app, "tags", [])
+            "enabled_tag_ids": [
+                tag.tag_id for tag in tags
                 if tag.enabled_dashboard
             ],
         },
@@ -322,9 +456,13 @@ def _write_project(app, file_path):
             except OSError:
                 pass
         LOGGER.exception("Project save failed: %s", file_path)
+        if isinstance(error, (InvalidTagIdError, ProjectTagIdentityError, TagReferenceError)):
+            message = f"Unable to save project because a tag identity is invalid: {error}"
+        else:
+            message = "Unable to save project. Check the folder permissions."
         messagebox.showerror(
             "Erro ao guardar projeto",
-            "Unable to save project. Check the folder permissions.",
+            message,
         )
         return False
 
@@ -443,16 +581,16 @@ def _apply_project_data(app, project, show_error=True, project_path=None):
 
 def _restore_tag_feature_configuration(tags, project):
     trends = project.get("trends", {})
-    if "enabled_tags" in trends:
-        enabled = set(trends.get("enabled_tags", []))
+    if "enabled_tag_ids" in trends:
+        enabled = set(trends.get("enabled_tag_ids", []))
         for tag in tags:
-            tag.enabled_trend = tag.name in enabled
+            tag.enabled_trend = tag.tag_id in enabled
 
     dashboard = project.get("dashboard", {})
-    if "enabled_tags" in dashboard:
-        enabled = set(dashboard.get("enabled_tags", []))
+    if "enabled_tag_ids" in dashboard:
+        enabled = set(dashboard.get("enabled_tag_ids", []))
         for tag in tags:
-            tag.enabled_dashboard = tag.name in enabled
+            tag.enabled_dashboard = tag.tag_id in enabled
 
 
 def _restore_connection_settings(app, brand, settings):
@@ -532,7 +670,15 @@ def _restore_simulation_ui_state(app, state):
             menu.set(size)
         setattr(app, f"_{prefix}_sort_column", tab_state.get("sort_column", "name"))
         setattr(app, f"_{prefix}_sort_descending", bool(tab_state.get("sort_descending", False)))
-        setattr(app, f"_{prefix}_selected_tag_name", tab_state.get("selected_row"))
+        selected_id = tab_state.get("selected_tag_id")
+        selected = next(
+            (tag.name for tag in getattr(app, "tags", []) if tag.tag_id == selected_id),
+            None,
+        )
+        if selected_id is None:
+            selected = tab_state.get("selected_row")
+        setattr(app, f"_{prefix}_selected_tag_name", selected)
+        setattr(app, f"_{prefix}_selected_tag_id", selected_id if selected else None)
         refresh(app, reset_page=True)
     selected_tab = state.get("selected_tab")
     if selected_tab and hasattr(app, "tabs"):
@@ -542,13 +688,13 @@ def _restore_simulation_ui_state(app, state):
 
 def _restore_digital_settings(app, settings):
     by_tag = {
-        str(item.get("tag", "")): item
+        str(item.get("tag_id", "")): item
         for item in settings
         if isinstance(item, dict)
     }
     app._digital_settings_cache = dict(by_tag)
     for index, widget in enumerate(app.digital_controls):
-        config = by_tag.get(app.digital_tags[index].name)
+        config = by_tag.get(app.digital_tags[index].tag_id)
         if config is None:
             continue
         mode = config.get("mode", "Toggle")
@@ -562,7 +708,7 @@ def _restore_analog_profiles(app, profiles):
         tag for tag in getattr(app, "tags", [])
         if tag.direction == "Input" and tag.data_type in SIEMENS_NUMERIC_TYPES
     ]
-    tags_by_name = {tag.name: tag for tag in analog_tags}
+    tags_by_id = {tag.tag_id: tag for tag in analog_tags}
     by_tag = {}
     if isinstance(profiles, dict):
         profiles = [
@@ -577,30 +723,34 @@ def _restore_analog_profiles(app, profiles):
         profiles = []
 
     for position, item in enumerate(profiles):
-        tag_name = ""
+        tag_id = ""
         if isinstance(item, dict):
-            tag_name = str(
-                item.get("tag") or item.get("tag_name") or item.get("name") or ""
-            )
-            if not tag_name:
+            tag_id = str(item.get("tag_id") or "")
+            if not tag_id:
+                legacy_name = str(
+                    item.get("tag") or item.get("tag_name") or item.get("name") or ""
+                )
+                matches = [tag for tag in analog_tags if tag.name == legacy_name]
+                tag_id = matches[0].tag_id if len(matches) == 1 else ""
+            if not tag_id:
                 raw_index = item.get("index", item.get("row", position))
                 try:
-                    tag_name = analog_tags[int(raw_index)].name
+                    tag_id = analog_tags[int(raw_index)].tag_id
                 except (TypeError, ValueError, IndexError):
-                    tag_name = ""
+                    tag_id = ""
         elif position < len(analog_tags):
-            tag_name = analog_tags[position].name
-        if not tag_name:
+            tag_id = analog_tags[position].tag_id
+        if not tag_id:
             LOGGER.warning("Analog profile ignored: position=%d has no tag identity", position)
             continue
-        if tag_name not in tags_by_name:
-            LOGGER.warning("Analog profile ignored: tag=%s is not present", tag_name)
+        if tag_id not in tags_by_id:
+            LOGGER.warning("Analog profile ignored: tag_id=%s is not present", tag_id)
             continue
-        by_tag[tag_name] = item
+        by_tag[tag_id] = item
 
     # Establish the complete canonical store before any Treeview/editor refresh.
     app._analog_profile_cache = dict(by_tag)
-    for tag_name, tag in tags_by_name.items():
+    for tag in tags_by_id.values():
         canonical_analog_profile(app, tag)
     for index, widget in enumerate(getattr(app, "analog_controls", [])):
         if not widget.get("interactive", True):
@@ -653,18 +803,25 @@ def _restore_pid(app, pid):
     output_tags = get_pid_output_tags(app)
     output_names = [tag.name for tag in output_tags]
 
-    sp_source = str(pid.get("sp_source", "Manual") or "Manual")
+    tags_by_id = {tag.tag_id: tag for tag in getattr(app, "tags", [])}
+    sp_tag = tags_by_id.get(pid.get("sp_source_tag_id"))
+    app._pid_sp_source_tag_id = sp_tag.tag_id if sp_tag else None
+    sp_source = sp_tag.name if sp_tag else "Manual"
     app.pid_sp_source_menu.set(
         sp_source if sp_source in numeric_names else "Manual"
     )
 
-    pv_source = str(pid.get("pv_source", "") or "")
+    pv_tag = tags_by_id.get(pid.get("pv_source_tag_id"))
+    app._pid_pv_source_tag_id = pv_tag.tag_id if pv_tag else None
+    pv_source = pv_tag.name if pv_tag else ""
     app.pid_pv_menu.set(
         pv_source if pv_source in numeric_names
         else (numeric_names[0] if numeric_names else "")
     )
 
-    out_source = str(pid.get("out_source", "") or "")
+    out_tag = tags_by_id.get(pid.get("out_source_tag_id"))
+    app._pid_out_source_tag_id = out_tag.tag_id if out_tag else None
+    out_source = out_tag.name if out_tag else ""
     if out_source not in output_names:
         legacy_address = _normalize_pid_address(pid.get("out_address", ""))
         out_source = next(
@@ -694,17 +851,18 @@ def _restore_trends(app, trends):
     app.trend_auto_scale.set(bool(trends.get("auto_scale", True)))
     refresh_trend_selectors(app)
 
-    selected = set(trends.get("selected_curves", []))
+    selected = set(trends.get("selected_curve_ids", []))
     if hasattr(app, "trend_visible_tags"):
         app.trend_visible_tags.clear()
         app.trend_visible_tags.update(selected)
         for tag in getattr(app, "tags", []):
             from ui.trend_tab import _trend_config
-            _trend_config(app, tag)["visible"] = tag.name in selected
+            _trend_config(app, tag)["visible"] = tag.tag_id in selected
         refresh_trend_selectors(app)
     else:
         for name, variable in app.trend_tag_vars.items():
-            variable.set(name in selected)
+            tag = next((tag for tag in getattr(app, "tags", []) if tag.name == name), None)
+            variable.set(bool(tag and tag.tag_id in selected))
 
 
 def _default_project_data():
@@ -725,11 +883,11 @@ def _default_project_data():
         "alarms": [],
         "pid": {},
         "trends": {
-            "enabled_tags": [],
-            "selected_curves": [],
+            "enabled_tag_ids": [],
+            "selected_curve_ids": [],
             "auto_scale": True,
         },
-        "dashboard": {"enabled_tags": []},
+        "dashboard": {"enabled_tag_ids": []},
         "analog_profiles": [],
     }
 
@@ -814,12 +972,15 @@ def _stage_project_data(project):
     if not isinstance(runtime_settings.get("digital_inputs", []), list):
         raise ValueError("Configuração de entradas digitais inválida")
 
-    tag_types = {tag.name: tag.data_type for tag in tags}
+    tags_by_id = {tag.tag_id: tag for tag in tags}
     normalized_alarms = []
     for index, alarm in enumerate(staged["alarms"], start=1):
         if not isinstance(alarm, dict):
             raise ValueError(f"Alarme {index}: configuração inválida")
-        source = str(alarm.get("source", "")).strip()
+        source_tag_id = str(alarm.get("source_tag_id", "")).strip()
+        source_tag = tags_by_id.get(source_tag_id)
+        if source_tag is None:
+            raise ValueError(f"Alarme {index}: referência de origem inválida")
         alarm_type = alarm.get("type", "HIGH")
         if alarm_type not in ("HIGH HIGH", "HIGH", "LOW", "LOW LOW"):
             raise ValueError(f"Alarme {index}: tipo inválido {alarm_type}")
@@ -827,10 +988,11 @@ def _stage_project_data(project):
             numeric_limit = float(alarm.get("limit", 20000))
         except (TypeError, ValueError) as error:
             raise ValueError(f"Alarme {index}: limite inválido") from error
-        if tag_types.get(source) != "REAL" and numeric_limit.is_integer():
+        if source_tag.data_type != "REAL" and numeric_limit.is_integer():
             numeric_limit = int(numeric_limit)
         normalized_alarms.append({
-            "source": source,
+            "source_tag_id": source_tag.tag_id,
+            "source_tag_name": source_tag.name,
             "type": alarm_type,
             "limit": numeric_limit,
         })
@@ -853,60 +1015,276 @@ def _validate_project_data(project):
 
 
 def migrate_project_data(data):
-    """Return an in-memory schema-v2 project without modifying its source."""
+    """Return an in-memory current-schema project without modifying its source."""
     if not isinstance(data, dict):
         raise ValueError("Formato de projeto inválido")
     migrated = copy.deepcopy(data)
-    if int(migrated.get("schema_version", 1) or 1) >= PROJECT_SCHEMA_VERSION:
-        return migrated
+    schema_version = int(migrated.get("schema_version", 1) or 1)
+    warnings = list(migrated.get("_migration_warnings", []))
+    was_migrated = bool(migrated.get("_was_migrated", False))
 
-    warnings = []
-    plc = migrated.get("plc", {})
-    if plc.get("brand", "Siemens") == "Siemens":
-        settings = plc.get("settings", {})
-        raw_db = settings.get("db_number", migrated.get("siemens_connection", {}).get("db_number"))
-        try:
-            db_number = int(raw_db)
-            if db_number <= 0:
-                raise ValueError
-        except (TypeError, ValueError):
-            db_number = None
-
-        converted_tags = []
-        for index, raw_tag in enumerate(migrated.get("tags", []), start=1):
-            if not isinstance(raw_tag, dict):
-                warnings.append(f"Tag {index}: invalid definition was skipped.")
-                continue
-            tag = copy.deepcopy(raw_tag)
-            name = str(tag.get("name") or f"Tag {index}")
-            data_type = str(tag.get("data_type", "BOOL")).upper()
-            address = str(tag.get("address") or "").strip()
+    if schema_version < 2:
+        plc = migrated.get("plc", {})
+        if plc.get("brand", "Siemens") == "Siemens":
+            settings = plc.get("settings", {})
+            raw_db = settings.get("db_number", migrated.get("siemens_connection", {}).get("db_number"))
             try:
-                if address and address.lstrip().startswith("%"):
-                    parsed = validate_siemens_data_type(data_type, address)
-                elif address.upper().startswith("DB") and db_number is not None:
-                    parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{address}")
-                else:
-                    offset = tag.get("byte_offset", tag.get("offset", tag.get("byte")))
-                    if offset is None or db_number is None:
-                        raise SiemensAddressError("missing legacy DB number or byte offset")
-                    offset = int(offset)
-                    units = {"BOOL": "DBX", "BYTE": "DBB", "WORD": "DBW", "INT": "DBW", "DWORD": "DBD", "DINT": "DBD", "REAL": "DBD"}
-                    suffix = f"{offset}.{int(tag.get('bit_offset', tag.get('bit', 0)))}" if data_type == "BOOL" else str(offset)
-                    parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{units[data_type]}{suffix}")
-                tag["address"] = parsed.normalized_address
-                for obsolete in ("byte_offset", "offset", "byte", "bit_offset", "bit", "db_number"):
-                    tag.pop(obsolete, None)
-                converted_tags.append(tag)
-            except (KeyError, TypeError, ValueError, SiemensAddressError) as error:
-                warnings.append(f'Tag "{name}": could not be migrated ({error}); tag was skipped.')
-        migrated["tags"] = converted_tags
-        settings.pop("db_number", None)
+                db_number = int(raw_db)
+                if db_number <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                db_number = None
 
-    migrated["schema_version"] = PROJECT_SCHEMA_VERSION
-    migrated["_was_migrated"] = True
-    migrated["_migration_warnings"] = warnings
+            converted_tags = []
+            for index, raw_tag in enumerate(migrated.get("tags", []), start=1):
+                if not isinstance(raw_tag, dict):
+                    warnings.append(f"Tag {index}: invalid definition was skipped.")
+                    continue
+                tag = copy.deepcopy(raw_tag)
+                name = str(tag.get("name") or f"Tag {index}")
+                data_type = str(tag.get("data_type", "BOOL")).upper()
+                address = str(tag.get("address") or "").strip()
+                try:
+                    if address and address.lstrip().startswith("%"):
+                        parsed = validate_siemens_data_type(data_type, address)
+                    elif address.upper().startswith("DB") and db_number is not None:
+                        parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{address}")
+                    else:
+                        offset = tag.get("byte_offset", tag.get("offset", tag.get("byte")))
+                        if offset is None or db_number is None:
+                            raise SiemensAddressError("missing legacy DB number or byte offset")
+                        offset = int(offset)
+                        units = {"BOOL": "DBX", "BYTE": "DBB", "WORD": "DBW", "INT": "DBW", "DWORD": "DBD", "DINT": "DBD", "REAL": "DBD"}
+                        suffix = f"{offset}.{int(tag.get('bit_offset', tag.get('bit', 0)))}" if data_type == "BOOL" else str(offset)
+                        parsed = validate_siemens_data_type(data_type, f"%DB{db_number}.{units[data_type]}{suffix}")
+                    tag["address"] = parsed.normalized_address
+                    for obsolete in ("byte_offset", "offset", "byte", "bit_offset", "bit", "db_number"):
+                        tag.pop(obsolete, None)
+                    converted_tags.append(tag)
+                except (KeyError, TypeError, ValueError, SiemensAddressError) as error:
+                    warnings.append(f'Tag "{name}": could not be migrated ({error}); tag was skipped.')
+            migrated["tags"] = converted_tags
+            settings.pop("db_number", None)
+        was_migrated = True
+
+    generated_ids = _normalize_project_tag_identities(migrated.get("tags", []))
+    if generated_ids:
+        migrated["_identity_migration_count"] = generated_ids
+        was_migrated = True
+    reference_count, reference_warnings = _migrate_feature_references(migrated)
+    if reference_count:
+        migrated["_reference_migration_count"] = reference_count
+        was_migrated = True
+    if reference_warnings:
+        warnings.extend(reference_warnings)
+        was_migrated = True
+    if schema_version < PROJECT_SCHEMA_VERSION:
+        was_migrated = True
+        migrated["schema_version"] = PROJECT_SCHEMA_VERSION
+    if was_migrated:
+        migrated["_was_migrated"] = True
+        migrated["_migration_warnings"] = warnings
     return migrated
+
+
+def _migrate_feature_references(project):
+    """Normalize all project feature references to canonical tag IDs."""
+    tags = project.get("tags", [])
+    if not isinstance(tags, list):
+        return 0, []
+    index = build_tag_reference_index(tags)
+    migrated_count = 0
+    warnings = []
+
+    def resolve(reference, context, *, optional=False):
+        try:
+            tag = resolve_tag_reference(reference, index, context=context)
+        except TagReferenceError as error:
+            if not optional or not isinstance(error, UnresolvedTagReferenceError):
+                raise
+            warnings.append(str(error) + " Optional reference was cleared.")
+            return None
+        return tag
+
+    def normalize_id_list(section, id_field, legacy_field, context):
+        nonlocal migrated_count
+        raw_ids = section.get(id_field)
+        references = (
+            [{"tag_id": value} for value in raw_ids]
+            if isinstance(raw_ids, list)
+            else list(section.get(legacy_field, []))
+        )
+        normalized = []
+        for position, reference in enumerate(references, start=1):
+            tag = resolve(reference, f"{context} {position}", optional=True)
+            if tag is not None:
+                tag_id = normalize_tag_id(tag.get("tag_id"))
+                if tag_id not in normalized:
+                    normalized.append(tag_id)
+        if legacy_field in section:
+            migrated_count += len(references)
+            section.pop(legacy_field, None)
+        section[id_field] = normalized
+
+    dashboard = project.setdefault("dashboard", {})
+    if isinstance(dashboard, dict):
+        normalize_id_list(
+            dashboard, "enabled_tag_ids", "enabled_tags", "Dashboard reference"
+        )
+
+    trends = project.setdefault("trends", {})
+    if isinstance(trends, dict):
+        normalize_id_list(trends, "enabled_tag_ids", "enabled_tags", "Trend enabled reference")
+        normalize_id_list(trends, "selected_curve_ids", "selected_curves", "Trend curve reference")
+
+    normalized_alarms = []
+    for position, alarm in enumerate(project.get("alarms", []), start=1):
+        if not isinstance(alarm, dict):
+            continue
+        reference = (
+            {"tag_id": alarm.get("source_tag_id")}
+            if "source_tag_id" in alarm
+            else alarm.get("source")
+        )
+        if "source" in alarm and "source_tag_id" not in alarm:
+            migrated_count += 1
+        tag = resolve(reference, f"Alarm {position} source")
+        normalized_alarms.append({
+            **{key: value for key, value in alarm.items() if key not in ("source", "source_tag_id", "source_tag_name")},
+            "source_tag_id": normalize_tag_id(tag.get("tag_id")),
+            "source_tag_name": str(tag.get("name", "")),
+        })
+    project["alarms"] = normalized_alarms
+
+    pid = project.setdefault("pid", {})
+    if isinstance(pid, dict):
+        for role in ("sp_source", "pv_source", "out_source"):
+            id_field = f"{role}_tag_id"
+            name_field = f"{role}_tag_name"
+            legacy = pid.get(role)
+            if role == "sp_source" and legacy == "Manual" and not pid.get(id_field):
+                pid[id_field] = None
+                pid[name_field] = None
+                continue
+            reference = {"tag_id": pid.get(id_field)} if pid.get(id_field) else legacy
+            if not reference:
+                pid[id_field] = None
+                pid[name_field] = None
+                continue
+            tag = resolve(reference, f"PID {role}")
+            if not pid.get(id_field):
+                migrated_count += 1
+            pid[id_field] = normalize_tag_id(tag.get("tag_id"))
+            pid[name_field] = str(tag.get("name", ""))
+            pid.pop(role, None)
+
+    runtime_settings = project.setdefault("runtime_settings", {})
+    digital_inputs = runtime_settings.get("digital_inputs", []) if isinstance(runtime_settings, dict) else []
+    normalized_digital = []
+    for position, item in enumerate(digital_inputs, start=1):
+        if not isinstance(item, dict):
+            continue
+        reference = {"tag_id": item.get("tag_id")} if item.get("tag_id") else item.get("tag")
+        if not item.get("tag_id"):
+            migrated_count += 1
+        tag = resolve(reference, f"Digital setting {position}", optional=True)
+        if tag is not None:
+            normalized_digital.append({
+                **{key: value for key, value in item.items() if key not in ("tag", "tag_id", "tag_name")},
+                "tag_id": normalize_tag_id(tag.get("tag_id")),
+                "tag_name": str(tag.get("name", "")),
+            })
+    if isinstance(runtime_settings, dict):
+        runtime_settings["digital_inputs"] = normalized_digital
+
+    profiles = project.get("analog_profiles", [])
+    if isinstance(profiles, dict):
+        profiles = [
+            {**value, "tag": str(name)}
+            for name, value in profiles.items()
+            if isinstance(value, dict)
+        ]
+    analog_tags = [
+        tag for tag in tags
+        if tag.get("direction") == "Input" and tag.get("data_type") in SIEMENS_NUMERIC_TYPES
+    ]
+    normalized_profiles = []
+    if isinstance(profiles, list):
+        for position, item in enumerate(profiles):
+            if not isinstance(item, dict):
+                continue
+            reference = (
+                {"tag_id": item.get("tag_id")}
+                if item.get("tag_id")
+                else item.get("tag") or item.get("tag_name") or item.get("name")
+            )
+            if not reference and position < len(analog_tags):
+                reference = {"tag_id": analog_tags[position].get("tag_id")}
+            if not item.get("tag_id"):
+                migrated_count += 1
+            tag = resolve(reference, f"Analog profile {position + 1}", optional=True)
+            if tag is not None:
+                normalized_profiles.append({
+                    **{key: value for key, value in item.items() if key not in ("tag", "tag_id", "tag_name", "name")},
+                    "tag_id": normalize_tag_id(tag.get("tag_id")),
+                    "tag_name": str(tag.get("name", "")),
+                })
+    project["analog_profiles"] = normalized_profiles
+
+    if isinstance(runtime_settings, dict):
+        ui_state = runtime_settings.get("ui_state", {})
+        if isinstance(ui_state, dict):
+            for prefix in ("digital", "analog"):
+                state = ui_state.get(prefix, {})
+                if not isinstance(state, dict):
+                    continue
+                reference = (
+                    {"tag_id": state.get("selected_tag_id")}
+                    if state.get("selected_tag_id")
+                    else state.get("selected_row")
+                )
+                if reference:
+                    if "selected_row" in state and not state.get("selected_tag_id"):
+                        migrated_count += 1
+                    tag = resolve(reference, f"{prefix.title()} selected row", optional=True)
+                    state["selected_tag_id"] = (
+                        normalize_tag_id(tag.get("tag_id")) if tag is not None else None
+                    )
+                else:
+                    state["selected_tag_id"] = None
+                state.pop("selected_row", None)
+
+    return migrated_count, warnings
+
+
+def _normalize_project_tag_identities(tag_definitions):
+    """Normalize project IDs, generating only identities absent from legacy tags."""
+    if not isinstance(tag_definitions, list):
+        return 0
+
+    seen = set()
+    generated_count = 0
+    for index, tag_data in enumerate(tag_definitions, start=1):
+        if not isinstance(tag_data, dict):
+            continue
+        name = str(tag_data.get("name") or f"Tag {index}")
+        if "tag_id" not in tag_data:
+            tag_data["tag_id"] = generate_tag_id()
+            generated_count += 1
+        try:
+            tag_id = normalize_tag_id(tag_data["tag_id"])
+        except InvalidTagIdError as error:
+            raise ProjectTagIdentityError(
+                f'Tag "{name}" has an invalid tag_id: {error}'
+            ) from error
+        if tag_id in seen:
+            raise ProjectTagIdentityError(
+                f'Duplicate tag_id "{tag_id}" found for tag "{name}" '
+                "(identificador duplicado)."
+            )
+        tag_data["tag_id"] = tag_id
+        seen.add(tag_id)
+    return generated_count
 
 
 def _project_path(file_path):
@@ -959,19 +1337,21 @@ def reload_alarms(app, alarms):
 
     app.alarms.clear()
     app.alarm_rows.clear()
-    enabled_sources = [tag.name for tag in get_alarm_tags(app)]
+    enabled_tags = {tag.tag_id: tag for tag in get_alarm_tags(app)}
 
     for alarm_config in alarms:
         if not isinstance(alarm_config, dict):
             continue
-        source = str(alarm_config.get("source", ""))
-        if source not in enabled_sources:
+        source_tag = enabled_tags.get(alarm_config.get("source_tag_id"))
+        if source_tag is None:
             continue
+        source = source_tag.name
         alarm_type = alarm_config.get("type", "HIGH")
         if alarm_type not in ("HIGH HIGH", "HIGH", "LOW", "LOW LOW"):
             alarm_type = "HIGH"
 
         alarm = {
+            "source_tag_id": source_tag.tag_id,
             "source": source,
             "type": alarm_type,
             "limit": normalize_alarm_limit(

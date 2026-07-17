@@ -40,8 +40,8 @@ def test_project_build_uses_lightweight_visible_set(project_app):
     project_app.tags[0].enabled_trend = True
     project_app.trend_visible_tags = {project_app.tags[0].name}
     project = project_config.build_project_data(project_app)
-    assert project["trends"]["enabled_tags"] == [project_app.tags[0].name]
-    assert project["trends"]["selected_curves"] == [project_app.tags[0].name]
+    assert project["trends"]["enabled_tag_ids"] == [project_app.tags[0].tag_id]
+    assert project["trends"]["selected_curve_ids"] == [project_app.tags[0].tag_id]
 
 
 def test_default_config_is_reused_without_tk_variable():

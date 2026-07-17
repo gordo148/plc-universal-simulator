@@ -183,9 +183,9 @@ def test_bulk_analog_modes_survive_project_save_and_load(project_app, monkeypatc
     )
     project_config._restore_analog_profiles(restored, staged["analog_profiles"])
 
-    assert restored._analog_profile_cache["Speed"]["mode"] == "Ramp"
-    assert restored._analog_profile_cache["Speed"]["step"] == "2"
-    assert restored._analog_profile_cache["Level"]["mode"] == "Random"
+    assert restored._analog_profile_cache[project_app.tags[1].tag_id]["mode"] == "Ramp"
+    assert restored._analog_profile_cache[project_app.tags[1].tag_id]["step"] == "2"
+    assert restored._analog_profile_cache[project_app.tags[2].tag_id]["mode"] == "Random"
 
 
 def _profile_restore_app(tags, *, structure_initialized=False, table_tags=None):
@@ -211,9 +211,10 @@ def test_legacy_v1_project_without_analog_profiles_loads_with_defaults():
     app = _profile_restore_app(tags)
     project_config._restore_analog_profiles(app, staged["analog_profiles"])
 
-    profile = app._analog_profile_cache["LegacyLevel"]
+    profile = app._analog_profile_cache[tags[0].tag_id]
     assert profile == {
-        "tag": "LegacyLevel",
+        "tag_id": tags[0].tag_id,
+        "tag_name": "LegacyLevel",
         **DEFAULT_ANALOG_PROFILE,
         "enabled_sim": True,
     }
@@ -276,8 +277,8 @@ def test_one_malformed_analog_profile_does_not_abort_other_tags(caplog):
         },
     ])
 
-    assert app._analog_profile_cache["Broken"]["mode"] == "Manual"
-    assert app._analog_profile_cache["Valid"]["mode"] == "Step"
+    assert app._analog_profile_cache[tags[0].tag_id]["mode"] == "Manual"
+    assert app._analog_profile_cache[tags[1].tag_id]["mode"] == "Step"
     assert "tag=Broken" in caplog.text
 
 
@@ -293,7 +294,8 @@ def test_canonical_profiles_exist_before_tree_rows_are_refreshed(monkeypatch):
     monkeypatch.setattr(analog_tab, "sync_selected_editor_from_canonical", lambda _app: None)
 
     def assert_canonical_exists(target, tag_name):
-        assert target._analog_profile_cache[tag_name]["mode"] == "Ramp"
+        tag = next(tag for tag in target.tags if tag.name == tag_name)
+        assert target._analog_profile_cache[tag.tag_id]["mode"] == "Ramp"
         refreshed.append(tag_name)
 
     monkeypatch.setattr(analog_tab, "refresh_analog_tree_row", assert_canonical_exists)
@@ -316,13 +318,13 @@ def test_edpger02_project_restores_without_editor_controls_or_rollback():
     project_config._restore_analog_profiles(app, staged["analog_profiles"])
 
     assert len(analog_tags) == 41
-    assert set(app._analog_profile_cache) == {tag.name for tag in analog_tags}
+    assert set(app._analog_profile_cache) == {tag.tag_id for tag in analog_tags}
     assert all(
-        app._analog_profile_cache[tag.name]["mode"] == "Manual"
+        app._analog_profile_cache[tag.tag_id]["mode"] == "Manual"
         for tag in analog_tags
     )
     assert all(
-        app._analog_profile_cache[tag.name]["enabled_sim"] is True
+        app._analog_profile_cache[tag.tag_id]["enabled_sim"] is True
         for tag in analog_tags
     )
 
@@ -336,7 +338,7 @@ def test_keyed_and_null_legacy_profile_sections_are_accepted():
         "Level": {"mode": "Ramp", "min": "2", "max": "8"}
     }
     staged = project_config._stage_project_data(project)
-    assert staged["analog_profiles"][0]["tag"] == "Level"
+    assert staged["analog_profiles"][0]["tag_name"] == "Level"
     assert staged["analog_profiles"][0]["mode"] == "Ramp"
 
     project["analog_profiles"] = None

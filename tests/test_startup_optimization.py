@@ -29,7 +29,7 @@ def test_project_build_before_opening_trends_uses_safe_defaults(project_app):
     project = project_config.build_project_data(project_app)
 
     assert project["trends"]["auto_scale"] is True
-    assert project["trends"]["selected_curves"] == []
+    assert project["trends"]["selected_curve_ids"] == []
 
 
 def test_unopened_trend_settings_are_deferred_and_preserved(project_app):
@@ -46,5 +46,6 @@ def test_unopened_trend_settings_are_deferred_and_preserved(project_app):
     project = project_config.build_project_data(project_app)
 
     assert project_app._pending_trend_settings == settings
-    assert project["trends"]["selected_curves"] == ["Speed"]
+    speed = next(tag for tag in project_app.tags if tag.name == "Speed")
+    assert project["trends"]["selected_curve_ids"] == [speed.tag_id]
     assert project["trends"]["auto_scale"] is False

@@ -515,7 +515,7 @@ class PLCSimulator:
         self.analog_simulation_manager.reconcile(self.tags)
         invalid_tags = get_invalid_tags_for_brand(self)
         for tag in invalid_tags:
-            self.tag_runtime.invalidate(tag.name)
+            self.tag_runtime.invalidate(tag)
 
         signature = (
             connection_brand(self),
@@ -607,9 +607,13 @@ class PLCSimulator:
         numeric_names = [tag.name for tag in get_numeric_tags(self)]
         output_names = [tag.name for tag in get_pid_output_tags(self)]
 
-        current_sp = self.pid_sp_source_menu.get()
-        current_pv = self.pid_pv_menu.get()
-        current_out = self.pid_out_menu.get()
+        tags_by_id = {tag.tag_id: tag for tag in getattr(self, "tags", [])}
+        current_sp_tag = tags_by_id.get(getattr(self, "_pid_sp_source_tag_id", None))
+        current_pv_tag = tags_by_id.get(getattr(self, "_pid_pv_source_tag_id", None))
+        current_out_tag = tags_by_id.get(getattr(self, "_pid_out_source_tag_id", None))
+        current_sp = current_sp_tag.name if current_sp_tag else self.pid_sp_source_menu.get()
+        current_pv = current_pv_tag.name if current_pv_tag else self.pid_pv_menu.get()
+        current_out = current_out_tag.name if current_out_tag else self.pid_out_menu.get()
 
         sp_sources = ["Manual"] + numeric_names
         self.pid_sp_source_menu.configure(values=sp_sources)
@@ -683,7 +687,7 @@ class PLCSimulator:
     def toggle_digital(self, index):
         tag = self.digital_tags[index]
         current_state = bool(
-            self.tag_runtime.get_value(tag.name, False)
+            self.tag_runtime.get_value(tag, False)
         )
         new_state = not current_state
         self.write_digital_state(index, new_state)
@@ -736,7 +740,7 @@ class PLCSimulator:
             return None
 
         if item["profile_mode"].get() != "Manual":
-            current_value = self.tag_runtime.get_value(tag.name, 0)
+            current_value = self.tag_runtime.get_value(tag, 0)
             item["slider"].set(current_value)
             return
 
@@ -760,7 +764,7 @@ class PLCSimulator:
 
         if not self.is_online():
             self.tag_runtime.update(
-                tag.name, value, RuntimeValueSource.SIMULATION
+                tag, value, RuntimeValueSource.SIMULATION
             )
             self._simulated_values[tag.name] = value
             self._update_visible_analog_tag(tag, value)
@@ -844,8 +848,8 @@ class PLCSimulator:
 
         self.digital_states[index] = state
         if source is not None:
-            self.tag_runtime.update(tag.name, state, source)
-        runtime = self.tag_runtime.get(tag.name)
+            self.tag_runtime.update(tag, state, source)
+        runtime = self.tag_runtime.get(tag)
         actual_source = source or (runtime.source if runtime else None)
         if actual_source == RuntimeValueSource.SIMULATION:
             getattr(self, "_simulated_values", {}).update({tag.name: bool(state)})
@@ -865,8 +869,8 @@ class PLCSimulator:
         tag = self.analog_tags[index]
 
         if source is not None:
-            self.tag_runtime.update(tag.name, value, source)
-        runtime = self.tag_runtime.get(tag.name)
+            self.tag_runtime.update(tag, value, source)
+        runtime = self.tag_runtime.get(tag)
         actual_source = source or (runtime.source if runtime else None)
         if actual_source == RuntimeValueSource.SIMULATION:
             getattr(self, "_simulated_values", {}).update({tag.name: value})

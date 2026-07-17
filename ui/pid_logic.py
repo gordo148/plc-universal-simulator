@@ -15,7 +15,7 @@ def _runtime_numeric_value(app, tag_name):
     if tag is None or tag.data_type not in ["INT", "REAL"]:
         raise ValueError(f"Tag PID inválida: {tag_name}")
 
-    runtime = app.tag_runtime.get(tag.name)
+    runtime = app.tag_runtime.get(tag)
     if runtime is None or not runtime.valid:
         raise ValueError(f"Tag PID sem valor runtime: {tag.name}")
 
@@ -39,7 +39,7 @@ def write_pid_output(app, value):
 
     if not app.is_online():
         app.tag_runtime.update(
-            output_tag.name,
+            output_tag,
             output_value,
             RuntimeValueSource.SIMULATION,
         )
