@@ -1,7 +1,5 @@
 """Tests for version generation without requiring a Git repository."""
 
-import importlib
-import sys
 from pathlib import Path
 
 import pytest
