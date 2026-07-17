@@ -13,6 +13,7 @@ __pycache__/
 build/*
 !build/README.md
 dist/
+core/generated/
 
 # Logs
 *.log

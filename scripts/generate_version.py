@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import ast
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,8 @@ FALLBACK_VERSION = "0.0.0-dev"
 FALLBACK_RELEASE = "Development"
 UNKNOWN = "Unknown"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-VERSION_MODULE = PROJECT_ROOT / "core" / "version.py"
+STATIC_VERSION_MODULE = PROJECT_ROOT / "core" / "version.py"
+BUILD_METADATA_MODULE = PROJECT_ROOT / "core" / "generated" / "build_metadata.py"
 
 SEMVER_TAG_PATTERN = re.compile(
     r"^v(?P<major>0|[1-9]\d*)\."
@@ -72,6 +74,7 @@ class VersionResult:
     warnings: tuple[str, ...] = ()
     git_commit: str = UNKNOWN
     git_branch: str = UNKNOWN
+    commit_timestamp: int | None = None
 
 
 def parse_semver_tag(tag_name: str) -> SemanticTag | None:
@@ -186,6 +189,7 @@ def inspect_repository() -> VersionResult:
 
     commit_hash = run_git(["rev-parse", "--short=7", "HEAD"])
     branch = run_git(["branch", "--show-current"]) or UNKNOWN
+    commit_timestamp = int(run_git(["show", "-s", "--format=%ct", "HEAD"]))
     reachable_names = run_git(["tag", "--merged", "HEAD", "--list"]).splitlines()
     exact_names = run_git(["tag", "--points-at", "HEAD", "--list"]).splitlines()
     valid_names = [name for name in reachable_names if parse_semver_tag(name)]
@@ -208,81 +212,95 @@ def inspect_repository() -> VersionResult:
         result.warnings,
         commit_hash,
         branch,
+        commit_timestamp,
     )
 
 
-def render_version_module(
+def render_build_metadata(
     version: str,
     release: str,
     git_commit: str = UNKNOWN,
     git_branch: str = UNKNOWN,
     build_date: str = UNKNOWN,
 ) -> str:
-    """Render a complete importable runtime version module."""
-    return f'''"""Generated application identity and release metadata.
+    """Render the importable, build-only metadata module."""
+    return f'''"""Generated build metadata; do not edit or commit this file."""
 
-Regenerate this file with ``scripts/generate_version.py`` during a build.
-"""
-
-import sys
-
-APP_NAME = {APP_NAME!r}
 APP_VERSION = {version!r}
 APP_RELEASE = {release!r}
 APP_GIT_COMMIT = {git_commit!r}
 APP_GIT_BRANCH = {git_branch!r}
 APP_BUILD_DATE = {build_date!r}
-BUILD_TYPE = {SOURCE_BUILD_TYPE!r}
-
-
-def get_build_type() -> str:
-    """Return the effective build type for source or PyInstaller execution."""
-    if getattr(sys, "frozen", False):
-        return "Packaged desktop build"
-    return BUILD_TYPE
 '''
 
 
-def write_version_module(
+def write_build_metadata(
     version: str,
     release: str,
     git_commit: str = UNKNOWN,
     git_branch: str = UNKNOWN,
     build_date: str = UNKNOWN,
 ) -> None:
-    """Atomically write generated runtime metadata as UTF-8."""
-    VERSION_MODULE.parent.mkdir(parents=True, exist_ok=True)
+    """Atomically write Git-ignored build metadata as UTF-8."""
+    BUILD_METADATA_MODULE.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=VERSION_MODULE.parent,
-            prefix=f".{VERSION_MODULE.name}.",
+            dir=BUILD_METADATA_MODULE.parent,
+            prefix=f".{BUILD_METADATA_MODULE.name}.",
             delete=False,
         ) as temporary_file:
             temporary_file.write(
-                render_version_module(
+                render_build_metadata(
                     version, release, git_commit, git_branch, build_date
                 )
             )
             temporary_path = Path(temporary_file.name)
-        os.replace(temporary_path, VERSION_MODULE)
+        os.replace(temporary_path, BUILD_METADATA_MODULE)
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
 
 
 def existing_fallback() -> tuple[str, str]:
-    """Read safe committed values without importing or modifying ``sys.path``."""
-    namespace: dict[str, object] = {}
+    """Read committed fallback constants without importing generated metadata."""
     try:
-        exec(VERSION_MODULE.read_text(encoding="utf-8"), namespace)
+        tree = ast.parse(STATIC_VERSION_MODULE.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
         return FALLBACK_VERSION, FALLBACK_RELEASE
-    version = namespace.get("APP_VERSION", FALLBACK_VERSION)
-    release = namespace.get("APP_RELEASE", FALLBACK_RELEASE)
-    return str(version), str(release)
+    values: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if (
+            isinstance(target, ast.Name)
+            and target.id in {"APP_VERSION", "APP_RELEASE"}
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            values[target.id] = node.value.value
+    return (
+        values.get("APP_VERSION", FALLBACK_VERSION),
+        values.get("APP_RELEASE", FALLBACK_RELEASE),
+    )
+
+
+def determine_build_date(result: VersionResult) -> str:
+    """Return a reproducible UTC date whenever build inputs provide one."""
+    source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if source_date_epoch is not None:
+        try:
+            timestamp = int(source_date_epoch)
+        except ValueError as error:
+            raise ValueError("SOURCE_DATE_EPOCH must be an integer timestamp") from error
+    elif result.commit_timestamp is not None:
+        timestamp = result.commit_timestamp
+    else:
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def main() -> int:
@@ -303,12 +321,16 @@ def main() -> int:
     print(f"Selected Git tag: {selected}")
     print(f"Detected application version: {result.version}")
     print(f"Detected release type: {result.release}")
-    build_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        build_date = determine_build_date(result)
+    except (OSError, OverflowError, ValueError) as error:
+        print(f"Version generation failed: {error}", file=sys.stderr)
+        return 1
     print(f"Detected Git commit: {result.git_commit}")
     print(f"Detected Git branch: {result.git_branch}")
     print(f"Build date: {build_date}")
     try:
-        write_version_module(
+        write_build_metadata(
             result.version,
             result.release,
             result.git_commit,
@@ -316,7 +338,10 @@ def main() -> int:
             build_date,
         )
     except OSError as error:
-        print(f"Version generation failed while writing {VERSION_MODULE}: {error}", file=sys.stderr)
+        print(
+            f"Version generation failed while writing {BUILD_METADATA_MODULE}: {error}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

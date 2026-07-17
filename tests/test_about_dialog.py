@@ -1,4 +1,6 @@
 import sys
+import subprocess
+from pathlib import Path
 
 from core.version import (
     APP_BUILD_DATE,
@@ -37,3 +39,16 @@ def test_about_text_detects_packaged_build(monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
 
     assert "Build: Packaged desktop build" in get_about_text()
+
+
+def test_core_version_falls_back_without_generated_metadata():
+    project_root = Path(__file__).parent.parent
+    result = subprocess.run(
+        [sys.executable, "-c", "import core.version as v; print(v.APP_VERSION)"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip()
