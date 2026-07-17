@@ -359,6 +359,8 @@ def _apply_project_data(app, project, show_error=True, project_path=None):
         phase = "restoring tag feature configuration"
         _restore_tag_feature_configuration(tags, project)
         app.tags = tags
+        from ui.dashboard_tab import reset_dashboard_project_state
+        reset_dashboard_project_state(app)
         app.tag_runtime.clear()
         phase = "normalizing analog profiles"
         _restore_analog_profiles(app, project.get("analog_profiles", []))

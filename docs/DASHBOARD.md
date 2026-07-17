@@ -1,59 +1,71 @@
-# Industrial Dashboard
+# Dashboard v2
 
-## Purpose and architecture
+## Architecture
 
-The Dashboard is an engineering overview of project, PLC, simulation, alarm,
-trend, and communication state. Its layout is fixed: 90 CustomTkinter widgets,
-one native tag `Treeview`, one native event `Treeview`, and one reusable tag
-detail panel. Widget count does not change with the number of tags.
+Dashboard v2 remains a lightweight `ttk.Treeview` view over the shared
+`TagDefinition` and `RuntimeTagCache` sources. `core/dashboard_model.py` owns
+the authoritative column registry, versioned preference validation, pure
+search/filter/sort transformations, statistics and bounded auto-fit sizing.
+`ui/dashboard_tab.py` owns Tk widgets, event bindings, row reconciliation,
+details, context actions and navigation adapters.
 
-The Dashboard refreshes every 750 ms through the application's tracked callback
-scheduler. Summary labels are updated in place. The dashboard tag Treeview is
-only repopulated when its filtered/sorted data signature changes; polling does
-not rebuild the Dashboard structure or call `generate_signals()`.
+Tag names remain the existing project-scoped identity because the current tag
+model has no persistent ID. Project application clears identity-to-item
+mappings before population, preventing a same-name selection from leaking
+between projects.
 
-## Summary cards and diagnostics
+## User workspace
 
-Cards show connection status, PLC brand and endpoint, project, tag-feature
-counts, communication health, last successful read, and latest read duration.
-Colors distinguish online/healthy, offline/error, warning, and inactive states.
+The central table/Selected Tag split is adjustable. Full View columns are
+managed with the Columns menu through validated `displaycolumns`; hiding or
+reordering a column never deletes Treeview rows. Name cannot be hidden.
+Deterministic Move Left/Right commands are used because custom ttk header drag
+is not reliable across Linux and Windows Tk. Manual separator resizing,
+double-click Auto Fit and Auto Fit Visible Columns persist bounded widths.
 
-`PLCService` exposes passive operation-level diagnostics: successful/failed
-reads and writes, reconnect count, timestamps, and average/latest durations.
-Metrics wrap existing calls and do not change driver interfaces or protocol
-behavior. Metrics are never emitted once per tag.
+Compact View displays Status, Name, Value and Comment and restores the exact previous
+Full View layout. Column layout, widths, compact mode, splitter, filters and
+sorting live in the versioned `dashboard_ui` user settings section and never in
+`.simproject` files.
 
-## Dashboard tag list
+## Search, filters and sorting
 
-Only `enabled_dashboard` tags appear. The table shows quality, identity,
-address, type, value, runtime source, alarm state, and trend state. Search is
-debounced and matches name, address, type, and source. Quick filters cover data
-types, active alarms, simulation, and PLC source. Every column is sortable.
+Search is case-insensitive across name, address, comment and type, including
+Unicode comments. Status filters are OR within GOOD/BAD. Feature filters
+(Simulation, Trend, Alarm) combine with AND semantics. Selected data types are
+OR; all categories and search combine with AND semantics.
 
-Double-clicking a row opens Digital for `BOOL`, or Analog for `INT`/`REAL`, and
-preserves that tag selection. The reusable detail panel shows PLC, simulated,
-and effective values, runtime quality/source, features, and update time.
+Name, Address, Type, Value and Status are sortable. The active heading displays
+▲/▼. Numeric values sort numerically and unavailable values remain last.
+Value-sorted order remains stable during live cycles to avoid row jumping; it
+is recomputed on an explicit sort or structural view change.
 
-## Events and integrations
+## Statistics and details
 
-The event table is backed by a bounded 50-entry `deque` and renders the latest
-20 meaningful events. Poll cycles are intentionally excluded.
+Cards show Total, GOOD, BAD, Simulation, Trend and Alarm counts over the full
+brand-compatible, dashboard-enabled population. The Showing label reports the
+filtered visible/total count. Connection state remains explicit text.
 
-Compact panels summarize alarms, existing Trend recording and buffers,
-simulation pulses/profiles, Internal Simulator state, and project metadata.
-Buttons navigate to their source tabs, control the existing Trend engine, stop
-simulation timers, save projects, and open the project folder. No alarm or
-trend engine is duplicated.
+Selected Tag is grouped into General, Values, Configuration and Diagnostics.
+Static fields are configured only when the selected definition changes;
+effective/PLC/simulated values, source, quality and timestamp use a separate
+snapshot so unchanged labels are not rewritten. The inspector is vertically
+scrollable.
 
-## Empty states and performance
+## Incremental rendering and lifecycle
 
-Disconnected/no-project/no-tag states use explicit text instead of blank
-panels. With 5,000 total tags and 1,000 dashboard tags on the documented Xvfb
-test host:
+The tracked 750 ms scheduler runs only on the Tk thread. Structural changes
+reuse stable item IDs where possible. Routine updates compare per-row display
+snapshots and call `Treeview.set()` only for changed cells. They do not delete
+and recreate the table, reset selection or modify scroll position. Auto-fit
+samples at most 500 visible rows and creates no per-tag widgets.
 
-- initial Dashboard creation: 345.344 ms
-- unchanged summary refresh: 11.338 ms
-- narrow tag search: 6.033 ms
-- fixed CTk count: 90 (29 frames, 44 labels, 15 buttons, one entry, one menu)
+Shutdown cancels tracked Dashboard callbacks; pending debounced preferences are
+already present in memory and the normal atomic settings save flushes them.
 
-These measurements exclude desktop compositor variance.
+## Navigation
+
+The lightweight row tooltip exposes name/address/comment. The context menu can
+copy name, address, comment or displayed value and navigate to Tag Manager or
+Trends through their existing lazy tab/search/selection workflows. Existing
+double-click Digital/Analog navigation is preserved.

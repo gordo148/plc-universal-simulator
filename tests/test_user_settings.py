@@ -67,6 +67,17 @@ def test_new_settings_default_to_projects_directory():
     assert ApplicationSettings().last_project_folder == "configs/projects"
 
 
+def test_dashboard_preferences_persist_and_restore_without_project_data(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = ApplicationSettings()
+    settings.ui_preferences["dashboard_ui"]["compact"] = True
+    settings.ui_preferences["dashboard_ui"]["full_layout"]["widths"]["comment"] = 455
+    settings.save(path)
+    loaded = ApplicationSettings.load(path)
+    assert loaded.ui_preferences["dashboard_ui"]["compact"] is True
+    assert loaded.ui_preferences["dashboard_ui"]["full_layout"]["widths"]["comment"] == 455
+
+
 def test_close_is_cancelled_when_unsaved_changes_are_not_discarded(monkeypatch):
     destroyed = []
     simulator = object.__new__(PLCSimulator)

@@ -143,6 +143,7 @@ def test_unchanged_table_signature_skips_tree_rebuild(monkeypatch):
         def delete(self,*_items):self.deleted+=1;self.rows=[]
         def insert(self,*_args,**kwargs):self.rows.append(kwargs["values"]);return str(len(self.rows)-1)
         def item(self,*_args,**_kwargs):self.updated+=1
+        def set(self,*_args):self.updated+=1
         def move(self,*_args):pass
         def selection(self):return self.selected
         def selection_set(self,item):self.selected=(item,)
@@ -161,3 +162,8 @@ def test_unchanged_table_signature_skips_tree_rebuild(monkeypatch):
     dashboard_tab.refresh_dashboard_table(app)
     assert app.dashboard_tag_table.deleted == 0
     assert app.dashboard_tag_table.updated == 0
+
+    runtime.update("D", True)
+    dashboard_tab.refresh_dashboard_table(app)
+    assert app.dashboard_tag_table.deleted == 0
+    assert app.dashboard_tag_table.updated == 3  # value, status and source only
