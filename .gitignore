@@ -6,6 +6,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Test coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # VS Code
 .vscode/
 
