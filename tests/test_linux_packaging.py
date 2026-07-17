@@ -41,6 +41,22 @@ def test_desktop_integration_files_exist():
     assert (PROJECT_ROOT / "scripts" / "uninstall_windows.bat").is_file()
 
 
+def test_pyinstaller_includes_generated_build_metadata():
+    spec = (PROJECT_ROOT / "plc-universal-simulator.spec").read_text(encoding="utf-8")
+
+    assert '"core.generated.build_metadata"' in spec
+
+
+def test_build_scripts_generate_metadata_before_pyinstaller():
+    linux = (PROJECT_ROOT / "scripts" / "build_linux.sh").read_text(encoding="utf-8")
+    windows = (PROJECT_ROOT / "scripts" / "build_windows.bat").read_text(encoding="utf-8")
+
+    assert linux.index("scripts/generate_version.py") < linux.index("-m PyInstaller")
+    assert windows.index(r"scripts\generate_version.py") < windows.index("-m PyInstaller")
+    assert "core/version.py" not in linux
+    assert "core\\version.py" not in windows
+
+
 def test_windows_icon_contains_required_resolutions():
     with Image.open(PROJECT_ROOT / "assets" / "icon.ico") as icon:
         assert icon.ico.sizes() == {

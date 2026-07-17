@@ -10,9 +10,11 @@ Build from the repository root:
 ./scripts/build_linux.sh
 ```
 
-The Linux and Windows build scripts generate `core/version.py` from the current
-Git tag before running PyInstaller. The packaged application reads that module
-at runtime and does not need Git or the repository metadata.
+The Linux and Windows build scripts generate the Git-ignored
+`core/generated/build_metadata.py` module from the current Git tag before
+running PyInstaller. `core/version.py` is a static public adapter and is never
+written by a build. The packaged application reads the generated module at
+runtime and does not need Git or the repository metadata.
 
 ## Version generation
 
@@ -24,18 +26,21 @@ An exact valid tag produces a release version. Otherwise, the nearest valid tag
 reachable from `HEAD` is combined with the commit distance and short hash, such
 as `2.2.2+3.gabc1234`. A dirty tree adds `.dirty`. If no valid tag is reachable,
 the version starts at `0.0.0`; if Git or repository metadata is unavailable, the
-committed values in `core/version.py` are used safely.
+static fallback values in `core/version.py` are used safely.
 
-`core/version.py` is the only runtime version source. Git is never invoked by
-the installed application, and `.git` is not included by PyInstaller. At
+`core/version.py` remains the stable runtime API. It uses generated build
+metadata when available and otherwise uses its committed fallback constants.
+Git is never invoked by the installed application, and `.git` is not included
+by PyInstaller. At
 runtime, the About dialog reports `Source development build` when launched with
 Python and `Packaged desktop build` when frozen by PyInstaller.
 
-The committed module always retains the latest known release version. The build
-generator atomically refreshes the version, release type, short commit, branch,
-and UTC build date. No release or development workflow ever requires manual
-editing of `core/version.py`. The development fallback is used only when Git
-metadata genuinely cannot be determined.
+The committed adapter retains the latest known fallback version. The build
+generator atomically writes version, release type, short commit, branch and UTC
+build date only to `core/generated/build_metadata.py`, which Git ignores.
+`SOURCE_DATE_EPOCH` supplies the date when set; otherwise the commit timestamp
+is used, with the current time as a last resort. Builds never modify
+`core/version.py` or another tracked source file.
 
 ## Stable release workflow
 

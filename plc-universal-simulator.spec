@@ -43,6 +43,7 @@ datas = [
 ]
 hiddenimports = optional_submodules("customtkinter") + [
     "core.version",
+    "core.generated.build_metadata",
     "drivers.internal_simulator",
     "drivers.modbus_tcp",
     "drivers.omron_fins",
