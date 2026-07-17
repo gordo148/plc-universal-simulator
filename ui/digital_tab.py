@@ -124,6 +124,7 @@ def _create_digital_master_detail(app):
     app.digital_scroll = editor  # compatibility parent; normal refresh creates no rows here
     app._digital_table_tags = []
     app._digital_selected_tag_name = None
+    app._digital_selected_tag_id = None
     treeview_tag_comment_tooltip(
         table,
         lambda row: app._digital_table_tags[table.index(row)] if row else None,
@@ -207,7 +208,8 @@ def _bind_selected_digital(app):
     tag = app._digital_table_tags[position]
     selection_changed = getattr(app, "_digital_selected_tag_name", None) != tag.name or not app.digital_tags
     app._digital_selected_tag_name = tag.name
-    settings = getattr(app, "_digital_settings_cache", {}).get(tag.name, {})
+    app._digital_selected_tag_id = tag.tag_id
+    settings = getattr(app, "_digital_settings_cache", {}).get(tag.tag_id, {})
     app.digital_editor_title.configure(text=f"{tag.name} · {tag.address}")
     if selection_changed:
         app.digital_editor_mode.set(settings.get("mode", "Toggle"))
@@ -250,9 +252,10 @@ def _remember_visible_settings(app):
     cache = getattr(app, "_digital_settings_cache", {})
     for index, item in enumerate(app.digital_controls):
         if index < len(app.digital_tags):
-            tag_name = app.digital_tags[index].name
-            cache[tag_name] = {
-                "tag": tag_name,
+            tag = app.digital_tags[index]
+            cache[tag.tag_id] = {
+                "tag_id": tag.tag_id,
+                "tag_name": tag.name,
                 "mode": item["mode_menu"].get(),
                 "pulse_ms": item["pulse_entry"].get(),
             }
@@ -367,7 +370,7 @@ def _refresh_digital_table(app, tags, page, count, start, visible, refresh_start
     selected_item = None
     for tag in visible:
         state = bool(app.tag_runtime.get_value(tag.name, False))
-        settings = getattr(app, "_digital_settings_cache", {}).get(tag.name, {})
+        settings = getattr(app, "_digital_settings_cache", {}).get(tag.tag_id, {})
         plc = getattr(app, "_plc_values", {}).get(tag.name)
         simulated = getattr(app, "_simulated_values", {}).get(tag.name)
         different = plc is not None and simulated is not None and bool(plc) != bool(simulated)
@@ -476,7 +479,7 @@ def bind_digital_row(app, row, index, tag):
     row["address_label"].configure(text=tag.address)
     row["protocol_address_label"].configure(text=tag.address)
     _replace_entry(row["name_entry"], tag.name)
-    settings = getattr(app, "_digital_settings_cache", {}).get(tag.name, {})
+    settings = getattr(app, "_digital_settings_cache", {}).get(tag.tag_id, {})
     row["mode_menu"].set(settings.get("mode", "Toggle"))
     _replace_entry(row["pulse_entry"], str(settings.get("pulse_ms", "500")))
     row["button"].configure(command=lambda idx=index: app.digital_action(idx))

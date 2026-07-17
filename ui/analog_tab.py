@@ -123,6 +123,7 @@ def _create_analog_master_detail(app):
     app._analog_table_tags = []
     app._analog_table_items_by_name = {}
     app._analog_selected_tag_name = None
+    app._analog_selected_tag_id = None
     tag_comment_tooltip(
         editor_row["frame"],
         lambda: next((tag for tag in getattr(app, "tags", []) if tag.name == app._analog_selected_tag_name), None),
@@ -211,6 +212,7 @@ def _bind_selected_analog(app):
     if selection_changed:
         _cache_selected_analog_configuration(app)
         app._analog_selected_tag_name = tag.name
+        app._analog_selected_tag_id = tag.tag_id
         app.analog_controls[:] = []
         app.analog_tags[:] = []
         bind_analog_row(app, app.analog_editor, 0, tag)

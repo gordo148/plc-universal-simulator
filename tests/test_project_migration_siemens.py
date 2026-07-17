@@ -13,7 +13,7 @@ def test_migrates_all_legacy_widths_and_removes_global_db():
     types = ["BOOL", "BYTE", "WORD", "INT", "DWORD", "DINT", "REAL"]
     tags = [{"name": kind, "data_type": kind, "direction": "Input", "offset": 4, "bit": 3} for kind in types]
     migrated = migrate_project_data(_project(tags))
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 4
     assert "db_number" not in migrated["plc"]["settings"]
     assert [tag["address"] for tag in migrated["tags"]] == [
         "%DB2000.DBX4.3", "%DB2000.DBB4", "%DB2000.DBW4", "%DB2000.DBW4",

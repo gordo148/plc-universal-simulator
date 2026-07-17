@@ -6,7 +6,7 @@ from core.tag_model import TagDefinition
 from core.tag_runtime import RuntimeTagCache, RuntimeValueSource
 from services.plc_service import PLCService
 from ui import analog_tab, tag_manager
-from ui.analog_profiles import AnalogSimulationManager
+from ui.analog_profiles import AnalogSimulationManager, canonical_analog_profile
 
 
 class Clock:
@@ -182,8 +182,8 @@ def test_runtime_cache_exposes_multiple_values_to_all_consumers():
     manager.tick(now=0.0, reschedule=False)
 
     snapshot = app.tag_runtime.snapshot()
-    assert {name: item.value for name, item in snapshot.items()} == {
-        "A0": 1.0, "A1": 2.0, "A2": 3.0, "A3": 4.0,
+    assert {tag.tag_id: index + 1.0 for index, tag in enumerate(tags)} == {
+        tag_id: item.value for tag_id, item in snapshot.items()
     }
     assert all(item.source == RuntimeValueSource.SIMULATION for item in snapshot.values())
 
@@ -305,7 +305,7 @@ def test_editor_mode_change_immediately_updates_canonical_config_and_treeview():
     editor["profile_mode"].set("Ramp")
     analog_tab.on_analog_profile_editor_changed(app, "Ramp")
 
-    assert app._analog_profile_cache[tag.name]["mode"] == "Ramp"
+    assert app._analog_profile_cache[tag.tag_id]["mode"] == "Ramp"
     assert app.analog_table.rows[0][4] == "Ramp"
     assert editor["profile_status"].options["text"] == "Ramp READY"
     assert dirty == [True]
@@ -323,7 +323,7 @@ def test_start_selected_uses_canonical_displayed_mode_and_refreshes_row():
 
     assert manager.states[tag.name].mode == "Ramp"
     assert manager.states[tag.name].running is True
-    assert app._analog_profile_cache[tag.name]["mode"] == "Ramp"
+    assert app._analog_profile_cache[tag.tag_id]["mode"] == "Ramp"
     assert app.analog_table.rows[0][4] == "Ramp"
     assert app.analog_table.rows[0][5].startswith("Running")
     assert len(callbacks) == 1
@@ -335,7 +335,7 @@ def test_runtime_state_is_separate_from_canonical_configuration():
     manager.start(tag, config("Ramp", 0, 10, 5, 100))
     manager.tick(now=0.0, reschedule=False)
 
-    profile = app._analog_profile_cache[tag.name]
+    profile = app._analog_profile_cache[tag.tag_id]
     state = manager.states[tag.name]
     assert profile["mode"] == "Ramp"
     assert "phase" not in profile and "direction" not in profile
@@ -370,7 +370,7 @@ def test_select_all_refreshes_all_rows_from_canonical_modes(monkeypatch):
 
     tag_manager.set_all_tag_option(app, "enabled_sim", True)
 
-    assert [app._analog_profile_cache[tag.name]["mode"] for tag in tags] == [
+    assert [app._analog_profile_cache[tag.tag_id]["mode"] for tag in tags] == [
         "Ramp", "Ramp", "Random", "Step",
     ]
     assert [row[4] for row in app.analog_table.rows] == [
@@ -414,7 +414,7 @@ def test_project_restore_updates_editor_and_profile_tree_column():
         "step": "5", "interval_ms": "250", "enabled_sim": True,
     }])
 
-    assert app._analog_profile_cache["A"]["mode"] == "Ramp"
+    assert app._analog_profile_cache[tag.tag_id]["mode"] == "Ramp"
     assert editor["profile_mode"].get() == "Ramp"
     assert app.analog_table.rows[0][4] == "Ramp"
 
@@ -439,15 +439,16 @@ def test_select_all_converts_only_manual_profiles_to_ramp(monkeypatch):
     tag_manager.set_all_tag_option(app, "enabled_sim", True)
 
     assert all(tag.enabled_sim for tag in tags)
-    assert app._analog_profile_cache["Manual"]["mode"] == "Ramp"
-    assert app._analog_profile_cache["Manual"]["min"] == "10"
-    assert app._analog_profile_cache["Manual"]["max"] == "90"
-    assert app._analog_profile_cache["Manual"]["step"] == "5"
-    assert app._analog_profile_cache["Manual"]["interval_ms"] == "250"
-    assert app._analog_profile_cache["Manual"]["enabled_sim"] is True
-    assert [app._analog_profile_cache[name]["mode"] for name in (
+    manual = app._analog_profile_cache[tags[0].tag_id]
+    assert manual["mode"] == "Ramp"
+    assert manual["min"] == "10"
+    assert manual["max"] == "90"
+    assert manual["step"] == "5"
+    assert manual["interval_ms"] == "250"
+    assert manual["enabled_sim"] is True
+    assert [app._analog_profile_cache[tag.tag_id]["mode"] for tag in tags[1:]] == [
         "Ramp", "Random", "Step"
-    )] == ["Ramp", "Random", "Step"]
+    ]
     assert dirty == [True]
     assert callbacks == {}
     assert app.status_label.options["text"] == (
@@ -470,7 +471,7 @@ def test_select_all_defaults_missing_profiles_to_ramp_then_start_all_changes_val
 
     tag_manager.set_all_tag_option(app, "enabled_sim", True)
     assert all(
-        app._analog_profile_cache[tag.name]["mode"] == "Ramp" for tag in tags
+        app._analog_profile_cache[tag.tag_id]["mode"] == "Ramp" for tag in tags
     )
     assert callbacks == {}
 
@@ -487,6 +488,8 @@ def test_deselect_all_preserves_modes_and_parameters_and_stops_profiles(monkeypa
         "Ramp": {"tag": "Ramp", **config("Ramp", 1, 9, 2, 250)},
         "Random": {"tag": "Random", **config("Random", 3, 30, 4, 500)},
     }
+    for tag in tags:
+        canonical_analog_profile(app, tag)
     original_modes = {
         name: profile["mode"] for name, profile in app._analog_profile_cache.items()
     }
@@ -494,7 +497,7 @@ def test_deselect_all_preserves_modes_and_parameters_and_stops_profiles(monkeypa
     app.mark_project_modified = lambda: dirty.append(True)
     monkeypatch.setattr(tag_manager, "refresh_tag_table", lambda _app: None)
     manager.start_many(
-        (tag, app._analog_profile_cache[tag.name]) for tag in tags
+        (tag, canonical_analog_profile(app, tag)) for tag in tags
     )
     assert len(callbacks) == 1
 

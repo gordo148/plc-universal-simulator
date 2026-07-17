@@ -117,7 +117,9 @@ def add_alarm(app):
         app.status_label.configure(text="● ERRO ALARME", text_color="orange")
         return
 
+    source_tag = next(tag for tag in get_alarm_tags(app) if tag.name == source)
     alarm = {
+        "source_tag_id": source_tag.tag_id,
         "source": source,
         "type": alarm_type,
         "limit": limit,
@@ -153,14 +155,17 @@ def create_alarm_row(app, alarm):
     state = ctk.CTkLabel(row, text="NORMAL", text_color="lime", width=120)
     state.grid(row=0, column=0, padx=4, pady=6)
 
+    alarm_tag = _alarm_tag(app, alarm)
+    if alarm_tag is not None:
+        alarm["source"] = alarm_tag.name
     source = ctk.CTkLabel(row, text=alarm["source"], width=120)
     tag_comment_tooltip(
         source,
-        lambda: next((tag for tag in get_alarm_tags(app) if tag.name == alarm["source"]), None),
+        lambda: _alarm_tag(app, alarm),
     )
     source.grid(row=0, column=1, padx=4)
 
-    tag = next((item for item in get_alarm_tags(app) if item.name == alarm["source"]), None)
+    tag = _alarm_tag(app, alarm)
     comment = ctk.CTkLabel(row, text=tag.comment if tag else "", width=180)
     comment.grid(row=0, column=2, padx=4)
 
@@ -189,6 +194,8 @@ def create_alarm_row(app, alarm):
     app.alarm_rows.append({
         "alarm": alarm,
         "state": state,
+        "source": source,
+        "comment": comment,
         "value": value,
         "timestamp": timestamp,
         "ack": ack
@@ -205,15 +212,32 @@ def acknowledge_alarm(app, alarm):
     update_alarm_status(app)
 
 
+def _alarm_tag(app, alarm):
+    tag_id = alarm.get("source_tag_id") if isinstance(alarm, dict) else None
+    if tag_id:
+        return next(
+            (tag for tag in get_alarm_tags(app) if tag.tag_id == tag_id),
+            None,
+        )
+    source = alarm.get("source", "") if isinstance(alarm, dict) else str(alarm)
+    matches = [tag for tag in get_alarm_tags(app) if tag.name == source]
+    return matches[0] if len(matches) == 1 else None
+
+
 def get_alarm_value(app, source):
-    tag = next(
-        (tag for tag in get_alarm_tags(app) if tag.name == source),
-        None
-    )
+    tag = _alarm_tag(app, source)
     if tag is None:
         return None
 
-    value = app.tag_runtime.get_value(tag.name)
+    if isinstance(source, dict):
+        source["source"] = tag.name
+
+    runtime_reference = (
+        tag
+        if isinstance(source, dict) and source.get("source_tag_id")
+        else tag.name
+    )
+    value = app.tag_runtime.get_value(runtime_reference)
     if value is None:
         return None
 
@@ -240,7 +264,7 @@ def scan_alarms(app):
         return
 
     for alarm in app.alarms:
-        value = get_alarm_value(app, alarm["source"])
+        value = get_alarm_value(app, alarm)
 
         if value is None:
             alarm["last_value"] = 0
@@ -278,6 +302,11 @@ def scan_alarms(app):
 def update_alarm_table(app):
     for row in app.alarm_rows:
         alarm = row["alarm"]
+        tag = _alarm_tag(app, alarm)
+        if tag is not None:
+            alarm["source"] = tag.name
+            row["source"].configure(text=tag.name)
+            row["comment"].configure(text=tag.comment)
 
         row["value"].configure(text=str(alarm["last_value"]))
         row["timestamp"].configure(text=alarm["timestamp"])

@@ -8,6 +8,11 @@ import shutil
 import sys
 from tkinter import filedialog, messagebox, ttk
 
+from core.input_limits import (
+    InputFileTooLargeError,
+    MAX_CSV_FILE_SIZE_BYTES,
+    validate_input_file_size,
+)
 from core.tag_model import SIEMENS_NUMERIC_TYPES, Tag
 from drivers.siemens_address import SiemensAddressError, parse_siemens_address, validate_siemens_data_type
 from ui.header import connection_brand
@@ -30,7 +35,12 @@ class CSVEncodingError(ValueError):
 
 
 def _open_csv_text(file_path):
-    data = Path(file_path).read_bytes()
+    path = validate_input_file_size(
+        file_path,
+        MAX_CSV_FILE_SIZE_BYTES,
+        "CSV",
+    )
+    data = path.read_bytes()
     for encoding in CSV_ENCODINGS:
         try:
             text = data.decode(encoding)
@@ -1386,10 +1396,12 @@ def import_tia_csv(app):
         LOGGER.warning("TIA CSV import failed: %s", error)
         messagebox.showerror(
             "Erro Import TIA CSV",
-            CSV_READ_ERROR if isinstance(error, OSError) else (
+            str(error) if isinstance(error, InputFileTooLargeError) else (
+                CSV_READ_ERROR if isinstance(error, OSError) else (
                 CSV_ENCODING_ERROR
                 if isinstance(error, CSVEncodingError)
                 else CSV_FORMAT_ERROR
+                )
             ),
         )
         return
@@ -1420,10 +1432,12 @@ def import_schneider_csv(app):
         LOGGER.warning("Schneider CSV import failed: %s", error)
         messagebox.showerror(
             "Erro Import Schneider CSV",
-            CSV_READ_ERROR if isinstance(error, OSError) else (
+            str(error) if isinstance(error, InputFileTooLargeError) else (
+                CSV_READ_ERROR if isinstance(error, OSError) else (
                 CSV_ENCODING_ERROR
                 if isinstance(error, CSVEncodingError)
                 else CSV_FORMAT_ERROR
+                )
             ),
         )
         return

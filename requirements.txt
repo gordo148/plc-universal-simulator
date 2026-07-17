@@ -1,9 +1,16 @@
+# Runtime dependencies
 customtkinter
 python-snap7
 pymodbus
 pycomm3
 fins-driver
-pyinstaller
 matplotlib
 pillow
+
+# Build dependency
+pyinstaller
+
+# Engineering dependencies
 pytest
+pytest-cov
+ruff

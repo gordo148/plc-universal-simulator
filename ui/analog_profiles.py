@@ -90,7 +90,8 @@ def normalize_analog_profile(raw_profile, tag, logger=None):
             enabled = bool(raw_enabled)
 
     profile = {
-        "tag": tag.name,
+        "tag_id": tag.tag_id,
+        "tag_name": tag.name,
         "mode": mode,
         "min": minimum,
         "max": maximum,
@@ -113,8 +114,9 @@ def canonical_analog_profile(app, tag):
     if cache is None:
         cache = {}
         app._analog_profile_cache = cache
-    profile = normalize_analog_profile(cache.get(tag.name), tag)
-    cache[tag.name] = profile
+    legacy = cache.pop(tag.name, None) if tag.tag_id not in cache else None
+    profile = normalize_analog_profile(cache.get(tag.tag_id, legacy), tag)
+    cache[tag.tag_id] = profile
     return profile
 
 
@@ -126,7 +128,7 @@ def update_canonical_analog_profile(app, tag, values):
         if field in values:
             updated[field] = values[field]
     updated = normalize_analog_profile(updated, tag)
-    app._analog_profile_cache[tag.name] = updated
+    app._analog_profile_cache[tag.tag_id] = updated
     return updated, updated != current
 
 
@@ -138,7 +140,7 @@ def ensure_dynamic_analog_profiles(app, tags):
         if profile["mode"] == "Manual":
             profile = dict(profile)
             profile["mode"] = "Ramp"
-            app._analog_profile_cache[tag.name] = profile
+            app._analog_profile_cache[tag.tag_id] = profile
             changed.append(tag.name)
     return changed
 
@@ -207,7 +209,7 @@ class AnalogSimulationManager:
         configuration = canonical_analog_profile(self.app, tag)
         parsed = _parse_configuration(configuration)
         now = self.clock()
-        current = self.app.tag_runtime.get_value(tag.name, parsed["minimum"])
+        current = self.app.tag_runtime.get_value(tag, parsed["minimum"])
         try:
             current = float(current)
         except (TypeError, ValueError):

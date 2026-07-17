@@ -262,7 +262,7 @@ class PLCService:
 
         if result is not None:
             self.runtime_cache.update(
-                tag.name,
+                tag,
                 bool(result),
                 RuntimeValueSource.PLC,
             )
@@ -337,7 +337,7 @@ class PLCService:
 
         if result is not None and isinstance(target, TagDefinition):
             self.runtime_cache.update(
-                target.name,
+                target,
                 result,
                 RuntimeValueSource.PLC,
             )
@@ -386,7 +386,7 @@ class PLCService:
                     tag.name,
                     tag.address,
                 )
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
 
         if not parsed:
             return True
@@ -423,7 +423,7 @@ class PLCService:
                     affected,
                 )
                 for tag, _address, _size in range_tags:
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
                 continue
 
             for tag, address, _size in range_tags:
@@ -450,13 +450,13 @@ class PLCService:
                     else:
                         raise ValueError("Unsupported tag type")
                     self.runtime_cache.update(
-                        tag.name,
+                        tag,
                         value,
                         RuntimeValueSource.PLC,
                     )
                 except (IndexError, TypeError, ValueError):
                     success = False
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
 
         return success
 
@@ -474,7 +474,7 @@ class PLCService:
                 else:
                     raise ValueError("Unsupported tag type")
             except (TypeError, ValueError):
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
 
         success = True
         if coils:
@@ -494,7 +494,7 @@ class PLCService:
         ]
         for tag in tags:
             if tag not in supported:
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
 
         if not supported:
             return True
@@ -506,13 +506,13 @@ class PLCService:
         except Exception:
             LOGGER.exception("Rockwell symbolic-tag read failed")
             for tag in supported:
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
             return False
 
         success = True
         for tag in supported:
             if tag.address not in values:
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
                 success = False
                 continue
             try:
@@ -523,12 +523,12 @@ class PLCService:
                 else:
                     value = round(float(values[tag.address]), 3)
                 self.runtime_cache.update(
-                    tag.name,
+                    tag,
                     value,
                     RuntimeValueSource.PLC,
                 )
             except (TypeError, ValueError):
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
                 success = False
         return success
 
@@ -545,7 +545,7 @@ class PLCService:
                     value = self._driver.read_real(address)
 
                 if value is None:
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
                     success = False
                     continue
                 if tag.data_type == "BOOL":
@@ -555,13 +555,13 @@ class PLCService:
                 else:
                     value = round(float(value), 3)
                 self.runtime_cache.update(
-                    tag.name,
+                    tag,
                     value,
                     RuntimeValueSource.PLC,
                 )
             except Exception:
                 LOGGER.exception("Omron FINS read failed for tag %s", tag.name)
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
                 success = False
         return success
 
@@ -571,16 +571,16 @@ class PLCService:
             try:
                 value = self._driver.read(tag.address, tag.data_type)
                 if value is None:
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
                     success = False
                     continue
                 self.runtime_cache.update(
-                    tag.name,
+                    tag,
                     value,
                     RuntimeValueSource.PLC,
                 )
             except (TypeError, ValueError):
-                self.runtime_cache.invalidate(tag.name)
+                self.runtime_cache.invalidate(tag)
                 success = False
         return success
 
@@ -606,20 +606,20 @@ class PLCService:
             if values is None:
                 success = False
                 for tag, _ in block:
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
                 continue
 
             for tag, address in block:
                 offset = address - start
                 if offset < len(values):
                     self.runtime_cache.update(
-                        tag.name,
+                        tag,
                         bool(values[offset]),
                         RuntimeValueSource.PLC,
                     )
                 else:
                     success = False
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
         return success
 
     def _read_schneider_registers(self, tags) -> bool:
@@ -645,7 +645,7 @@ class PLCService:
             if values is None:
                 success = False
                 for tag, _ in block:
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
                 continue
 
             for tag, address in block:
@@ -661,13 +661,13 @@ class PLCService:
                         )
                         value = round(struct.unpack(">f", raw)[0], 3)
                     self.runtime_cache.update(
-                        tag.name,
+                        tag,
                         value,
                         RuntimeValueSource.PLC,
                     )
                 except (IndexError, struct.error):
                     success = False
-                    self.runtime_cache.invalidate(tag.name)
+                    self.runtime_cache.invalidate(tag)
         return success
 
 
